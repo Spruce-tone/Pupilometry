@@ -1,0 +1,7 @@
+*.ipynb
+.vscode
+adventech
+*.yaml
+*.dll
+*.xml
+IC-Imaging-Control
