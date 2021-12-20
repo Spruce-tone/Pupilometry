@@ -1,22 +1,34 @@
 import sys
+import os
 from typing import Union, List, Tuple, Set, Dict
 from PyQt5.QtWidgets import QApplication, QBoxLayout, QSplitter, QWidget, QPushButton, \
                             QToolTip, QMainWindow, QAction, qApp, \
                             QDesktopWidget, QHBoxLayout, QVBoxLayout, \
                             QFrame, QGridLayout, QLabel
-from PyQt5.QtCore import QCoreApplication, QDate, Qt, QTime
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import QCoreApplication, QDate, Qt, QTime, pyqtSignal, QThread, pyqtSlot
+from PyQt5.QtGui import QFont, QPixmap, QImage
+from lib import tisgrabber as tis
+import numpy as np
+import ctypes
+
+
 
 
 class pupil(QMainWindow):
     def __init__(self, height=500, width=500):
         super().__init__()
-        self.height = 800
-        self.width = 1300
+        self.height = 1000
+        self.width = 1400
         
-        self.initUI()
+        # define main widget
         self.main_widget = MainWidget()
         self.setCentralWidget(self.main_widget)
+
+        # define camera handle and functions
+        self.ic = self.main_widget.ic
+        self.camera = self.main_widget.camera
+
+        self.initUI()
 
     def initUI(self):
         self.setWindowTitle('Pupilometry')
@@ -25,7 +37,6 @@ class pupil(QMainWindow):
         self.statusBar().showMessage('Initialize')
         self._tooltips()
         self._menubar()
-        # self._toolbar()
         self.show()
 
     def _windowsize(self):
@@ -49,73 +60,99 @@ class pupil(QMainWindow):
         self.mainMenu = self.menuBar()
         self.mainMenu.setNativeMenuBar(False)
 
+        # File menu
         self.fileMenu = self.mainMenu.addMenu('&File')
-        self.fileMenu.addAction(self._exitaction())
-
-    # def _toolbar(self):
-    #     self.toolbar = self.addToolBar('Exit')
-    #     self.toolbar.addAction(self._exitaction(shortcut=False))
-
-    # 카메라가 연결된 경우 동작을 중지하고 끄는것 추가
-    def _exitaction(self, shortcut=True):
+        
+        # Exit menue
         exitAction = QAction('Exit', self)
-        if shortcut:
-            exitAction.setShortcut('Ctrl+Q')
-        exitAction.setStatusTip('Exit Application')
-        exitAction.triggered.connect(qApp.quit)
-        return exitAction
-    
+        exitAction.setShortcut('Ctrl+Q')
+        exitAction.triggered.connect(self._exitaction)
+        self.fileMenu.addAction(exitAction)
+
+        # select device menu
+        selectDeviceAction = QAction('Select Device', self)
+        selectDeviceAction.triggered.connect(self._selectdevice)
+        self.fileMenu.addAction(selectDeviceAction)
+
+    def _selectdevice(self):
+        self.ic.IC_StopLive(self.camera)
+        self.ic.IC_ShowDeviceSelectionDialog(None)
+
+        if self.ic.IC_IsDevValid(self.camera):
+            self.ic.IC_StartLive(self.camera, 0)
+            self.ic.IC_SaveDeviceStateToFile(self.camera, b'device.xml')
+
+    def _exitaction(self):
+        if self.ic.IC_IsDevValid(self.camera):
+            self.ic.IC_StopLive(self.camera)
+            self.ic.IC_ReleaseGrabber(self.camera)
+        qApp.quit()
+
+
+        # def _toolbar(self):
+    #     self.toolbar = self.addToolBar('Exit')
+    #     self.toolbar.addAction(self._exitaction(shortcut=False))    
 
 class MainWidget(QWidget):
     def __init__(self):
         super().__init__()
+        
+        # initialize and connect camera
+        self._init_camera()
+
+        # Define main layout
         self.main_layout = QHBoxLayout()
         
-        self._set_movie_frame()
-        self._set_graph_frame()
-        self._set_interactive_frmae()
+        # Generate and assign the frame layout
+        self._generate_frames()
         self._main_division()
 
+        # set main layout
         self.setLayout(self.main_layout)
 
         self._add_movie_widget()
 
+    def _init_camera(self):
+        '''
+        initialize and connect camera
+        '''
+        self.ic = ctypes.cdll.LoadLibrary('./lib/tisgrabber_x64.dll')
+        tis.declareFunctions(self.ic)
+        self.ic.IC_InitLibrary(0)
+        self.camera = tis.openDevice(self.ic)
+
+    # Movie widget 만들기
     def _add_movie_widget(self):
-        label1 = QLabel()
-        label1.setText('movie')
-        label2 = QLabel()
-        label2.setText('display')
-        live_bt = QPushButton('live')
-        stop_bt = QPushButton('stop')
+        movie_status = QLabel('Pupil display')
+        movie_status.setFont(QFont('Arial', 15))
+        self.movie_layout.addWidget(movie_status, alignment=Qt.AlignTop)
+        self.label = QLabel(self)
+        # th = Thread()
+        # th.start()
+        # th.Pixmap_display.connect(self.display_image)
+        # print('asdf')
+        # self.movie_layout.addWidget(label2, alignment=Qt.AlignTop)
+        self.movie_layout.addWidget(self.label, alignment=Qt.AlignVCenter)
+        # self.movie_layout.addWidget(live_bt, alignment=Qt.AlignBottom)
+        # self.movie_layout.addWidget(stop_bt, alignment=Qt.AlignBottom)
 
-        self.movie_layout.addWidget(label1, alignment=Qt.AlignTop)
-        self.movie_layout.addWidget(label2, alignment=Qt.AlignVCenter)
-        self.movie_layout.addWidget(live_bt, alignment=Qt.AlignBottom)
-        self.movie_layout.addWidget(stop_bt, alignment=Qt.AlignBottom)
+    def _set_frame(self, layout):
+        '''
+        define frames
+        '''
+        frame = QFrame()
+        frame.setFrameShape(QFrame.StyledPanel | QFrame.Raised)
+        frame_layout = layout
+        frame.setLayout(frame_layout)
+        return frame, frame_layout
 
-    def _set_movie_frame(self): 
+    def _generate_frames(self):
         '''
-        frame for pupil live imaging
+        generate frames to use
         '''
-        self.movie_frame = QFrame()
-        self.movie_frame.setFrameShape(QFrame.StyledPanel | QFrame.Raised)
-        self.movie_layout = QHBoxLayout()
-        self.movie_frame.setLayout(self.movie_layout)
-
-    def _set_graph_frame(self):
-        '''
-        frame for dynamic plot of pupil size
-        '''
-        self.graph_frame = QFrame()
-        self.graph_frame.setFrameShape(QFrame.StyledPanel | QFrame.Raised)
-        self.graph_layout = QGridLayout()
-        self.graph_frame.setLayout(self.graph_layout)
-
-    def _set_interactive_frmae(self):
-        self.interactive_frame = QFrame()
-        self.interactive_frame.setFrameShape(QFrame.StyledPanel | QFrame.Raised)
-        self.interactive_layout = QHBoxLayout()
-        self.interactive_frame.setLayout(self.interactive_layout)
+        self.movie_frame, self.movie_layout = self._set_frame(QHBoxLayout())
+        self.graph_frame, self.graph_layout = self._set_frame(QGridLayout())
+        self.interactive_frame, self.interactive_layout = self._set_frame(QHBoxLayout())
 
     def _main_division(self):
         '''
@@ -129,12 +166,21 @@ class MainWidget(QWidget):
         self.splt2.addWidget(self.splt1)
         self.splt2.addWidget(self.interactive_frame)
         
-        self.splt2.setSizes([400, 100])
+        self.splt2.setSizes([250, 100])
         self.splt1.setSizes([100, 100])
         self.main_layout.addWidget(self.splt2)
+    
+    @pyqtSlot(QImage)
+    def display_image(self, image):
+        self.label.setPixmap(QPixmap.fromImage(image))
 
-        
-        
+
+
+
+
+
+
+
 if __name__=='__main__':
     app = QApplication(sys.argv)
     ex = pupil()
