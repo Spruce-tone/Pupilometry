@@ -6,3 +6,4 @@ adventech
 *.xml
 IC-Imaging-Control
 env
+__pycache__
