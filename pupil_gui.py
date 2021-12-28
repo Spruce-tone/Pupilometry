@@ -17,7 +17,9 @@ from lib import tisgrabber as tis
 import numpy as np
 import ctypes
 
-from lib.SignalConnection import LiveDisplay
+sys.path.append('./lib')
+from lib.SignalConnection import LiveDisplay, DevConnectionState
+from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
 
 
@@ -42,7 +44,6 @@ class pupil(QMainWindow):
         self._main_windowsize()
         self._windowcenter()
         self.statusBar().showMessage('Initialize')
-        self._tooltips()
         self._menubar()
         self.show()
 
@@ -59,19 +60,17 @@ class pupil(QMainWindow):
         window_geometry.moveCenter(monitor_center)
         self.move(window_geometry.topLeft())
 
-    '''
-    추후 수정 또는 제거
-    '''
-    def _tooltips(self):
-        QToolTip.setFont(QFont('Airal', 10))
-        # self.setToolTip('<b>QWidget<b> widget')
-
     def _menubar(self):
         self.mainMenu = self.menuBar()
         self.mainMenu.setNativeMenuBar(False)
 
         # File menu
         self.fileMenu = self.mainMenu.addMenu('&File')
+
+        # select device menu
+        selectDeviceAction = QAction('Select Device', self)
+        selectDeviceAction.triggered.connect(self._selectdevice)
+        self.fileMenu.addAction(selectDeviceAction)
         
         # Exit menue
         exitAction = QAction('Exit', self)
@@ -79,29 +78,22 @@ class pupil(QMainWindow):
         exitAction.triggered.connect(self._exitaction)
         self.fileMenu.addAction(exitAction)
 
-        # select device menu
-        selectDeviceAction = QAction('Select Device', self)
-        selectDeviceAction.triggered.connect(self._selectdevice)
-        self.fileMenu.addAction(selectDeviceAction)
-
     def _selectdevice(self):
-        self.ic.IC_StopLive(self.camera)
+        self.ic.IC_StopLive(self.main_widget.camera)
         self.ic.IC_ShowDeviceSelectionDialog(None)
 
-        if self.ic.IC_IsDevValid(self.camera):
-            self.ic.IC_StartLive(self.camera, 0)
+        if self.ic.IC_IsDevValid(self.main_widget.camera):
+            self.ic.IC_StartLive(self.main_widget.camera, 0)
             self.ic.IC_SaveDeviceStateToFile(self.camera, b'device.xml')
 
     def _exitaction(self):
-        if self.ic.IC_IsDevValid(self.camera):
-            self.ic.IC_StopLive(self.camera)
-            self.ic.IC_ReleaseGrabber(self.camera)
+        if self.ic.IC_IsDevValid(self.main_widget.camera):
+            self.ic.IC_StopLive(self.main_widget.camera)
+            self.ic.IC_ReleaseGrabber(self.main_widget.camera)
+        self.live.pause()
+        self.connection_state_thread.pause()
         qApp.quit()
 
-
-        # def _toolbar(self):
-    #     self.toolbar = self.addToolBar('Exit')
-    #     self.toolbar.addAction(self._exitaction(shortcut=False))    
 
 class FileTreeView(QTreeView):
     key_pressed = pyqtSignal()
@@ -236,6 +228,9 @@ class MainWidget(QWidget):
         # initialize and connect camera
         self._init_camera()
 
+        # initialize and connect trigger device
+        self._init_trigger()
+
         # Define main layout
         self.main_layout = QHBoxLayout()
         
@@ -256,29 +251,78 @@ class MainWidget(QWidget):
         self.ic = ctypes.cdll.LoadLibrary('./lib/tisgrabber_x64.dll')
         tis.declareFunctions(self.ic)
         self.ic.IC_InitLibrary(0)
+
+        # connect camera
         self.camera = tis.openDevice(self.ic)
         self.frame_rate = 29.97
 
+    def _init_trigger(self):
+        self.dev_description = "USB-4751L,BID#0"
+        self.startPort = 2
+        self.portCount = 1
+
+        try:
+            self.trig = InstantDiCtrl(self.dev_description)
+        except:
+            self.trig = None
+
+
     # Movie widget 만들기
     def _add_movie_widget(self):
-        self.label = QLabel(self)
-        self.label.setScaledContents(True)
-        self.label.resize(720, 1080)
+        self.display_label = QLabel(self)
+        self.display_label.setScaledContents(True)
+        self.display_label.resize(720, 1080)
 
-        self.live = LiveDisplay(self, self.camera, self.ic)
+        self.live = LiveDisplay(self)
         self.live.start()
         self.live.Pixmap_display.connect(self.display_image)  
-        self.movie_layout.addWidget(self.label)
-
+        self.movie_layout.addWidget(self.display_label)
 
     # control pannel widget
     def _add_control_panel_widget(self):
         '''
         Panel for hardware connection state 
         '''
-        self.state_panel = QGroupBox('Status')
-        self.state_panel.setFont(QFont('Arial', 10))
+        self.state_panel = QGroupBox('Device connection state')
+        self.state_panel.setFont(QFont('Arial', 12))
+        self.state_panel_layout = QGridLayout()
+        
+        # define connection state label
+        self.camera_connection_label = QLabel('Camera connection state ')
+        self.camera_connection_state_label = QLabel('Ready')
+        self.camera_connection_led = QLabel(self)
+        self.camera_connection_led.setStyleSheet("QLabel {background-color : red; \
+                                                    border-color : black; \
+                                                    border-style : default; \
+                                                    border-width : 0px; \
+                                                    border-radius : 19px; \
+                                                    min-height: 3px; \
+                                                    min-width: 5px}")
+        self.trig_connection_label = QLabel('Trigger device connection state ')
+        self.trig_connection_state_label = QLabel('Ready')
+        self.trig_connection_led = QLabel(self)
+        self.trig_connection_led.setStyleSheet("QLabel {background-color : red; \
+                                                    border-color : black; \
+                                                    border-style : default; \
+                                                    border-width : 0px; \
+                                                    border-radius : 19px; \
+                                                    min-height: 3px; \
+                                                    min-width: 5px}")
 
+        # Define signla thread
+        self.connection_state_thread = DevConnectionState(self)
+        self.connection_state_thread.start()
+        self.connection_state_thread.dev_connection.connect(self._connection_state_view)
+
+        # set device connection state viewer
+        self.state_panel_layout.addWidget(self.camera_connection_label, 0, 0, 1, 5)
+        self.state_panel_layout.addWidget(self.camera_connection_state_label, 0, 5, 1, 4)
+        self.state_panel_layout.addWidget(self.camera_connection_led, 0, 9, 1, 1)
+        self.state_panel_layout.addWidget(self.trig_connection_label, 1, 0, 1, 5)
+        self.state_panel_layout.addWidget(self.trig_connection_state_label, 1, 5, 1, 4)
+        self.state_panel_layout.addWidget(self.trig_connection_led, 1, 9, 1, 1)
+
+        self.state_panel.setLayout(self.state_panel_layout)
         
         '''
         Pannel for directory tree 
@@ -290,6 +334,7 @@ class MainWidget(QWidget):
         # define file system viewer
         self.tree_view = FileTreeView()
 
+        # set widgets for filesystem
         self.file_browser_btn = QPushButton('File browser')
         self.cd_parent_btn = QPushButton('Parent directory')
         self.rename_btn = QPushButton('Rename')
@@ -357,9 +402,9 @@ class MainWidget(QWidget):
         # connect live, stop button with camera
         self.live_btn.clicked.connect(self._resume_live_imaging)
         self.stop_btn.clicked.connect(self._stop_live_imaging)
-        self.set_trigger_btn.clicked.connect(self._set_imaging_duration)
         self.acq_time_sec.setValidator(QDoubleValidator(0, 100, 3, self)) 
         self.acq_time_sec.textChanged.connect(self._set_imaging_duration) # self.acq_time_sec.returnPressed.connect()
+        self.set_trigger_btn.clicked.connect(self._set_recording)
         
         '''
         Control panel ratio
@@ -367,8 +412,6 @@ class MainWidget(QWidget):
         self.control_panel_layout.addWidget(self.state_panel, 1)
         self.control_panel_layout.addWidget(self.file_panel, 6)
         self.control_panel_layout.addWidget(self.imaging_panel, 1)
-
-
 
     def _set_frame(self, layout):
         '''
@@ -415,12 +458,19 @@ class MainWidget(QWidget):
     def display_image(self, qimage):
         self.live_pixmap = QPixmap.fromImage(qimage)
         self.live_pixmap.scaled(720, 470, Qt.KeepAspectRatioByExpanding)
-        self.label.setPixmap(self.live_pixmap)
+        self.display_label.setPixmap(self.live_pixmap)
     
     @pyqtSlot()
     def _resume_live_imaging(self):
-        self.live.resume()
+        if not self.ic.IC_IsDevValid(self.camera):
+            self._init_camera()
+
+        self.live = LiveDisplay(self)
+        self.live.Pixmap_display.connect(self.display_image)  
         self.live.start()
+        
+        # self.live.resume()
+        # self.live.start()
 
     @pyqtSlot()
     def _stop_live_imaging(self):
@@ -430,12 +480,64 @@ class MainWidget(QWidget):
     def _set_imaging_duration(self):
         duration = self.acq_time_sec.text()
         try:
-            duration = int(np.floor(float(duration) * self.frame_rate))
-            self.num_frames_label.setText(f'{duration:>20d} frames')
-            self.acq_time_min_label.setText(f'{duration//60:>20.0f} min {duration%60:>02.0f} sec')
+            self.duration = float(duration) # sec
+            self.frames = int(np.floor(self.duration * self.frame_rate)) # frames
+            self.num_frames_label.setText(f'{self.frames:>20d} frames')
+            self.acq_time_min_label.setText(f'{self.duration//60:>20.0f} min {self.duration%60:>02.0f} sec')
         except:
             self.num_frames_label.setText(f'0 frames')
             self.acq_time_min_label.setText(f'{0:>20.0f} min {0:>02.0f} sec')
+
+    @pyqtSlot()
+    def _set_recording(self):
+        if (not self.ic.IC_IsDevValid(self.camera)) or (self.trig is None):
+            QMessageBox.about(self, 'Error!', 'Connect camera and trigger device')
+
+        elif not self.ic.IC_IsDevValid(self.camera):
+            QMessageBox.about(self, 'Error!', 'Connect camera')
+
+        elif self.trig is None:
+            QMessageBox.about(self, 'Error!', 'Connect trigger device')
+
+        else:
+            pass
+
+    @pyqtSlot(bool, bool)
+    def _connection_state_view(self, camera_connection_state, trig_connection_state):
+        
+        # Check camera connection state
+        if camera_connection_state:
+            self.camera_connection_state_label.setText('Connected')
+            self.camera_connection_led.setStyleSheet("QLabel {background-color : green; border-color : black; \
+                                                        border-style : default; border-width : 0px; \
+                                                        border-radius : 19px; min-height: 3px; min-width: 5px}")
+        else:
+            self.camera_connection_state_label.setText('Disconnected')
+            self.camera_connection_led.setStyleSheet("QLabel {background-color : red; border-color : black; \
+                                                        border-style : default; border-width : 0px; \
+                                                        border-radius : 19px; min-height: 3px; min-width: 5px}")
+        
+        # Check trigger device connection state
+        if trig_connection_state:
+            self.trig_connection_state_label.setText('Connected')
+            self.trig_connection_led.setStyleSheet("QLabel {background-color : green; border-color : black; \
+                                                    border-style : default; border-width : 0px; \
+                                                    border-radius : 19px; min-height: 3px; min-width: 5px}")
+        else:
+            self._init_trigger()
+
+            if self.trig==None:
+                self.trig_connection_state_label.setText('Disconnected')
+                self.trig_connection_led.setStyleSheet("QLabel {background-color : red; border-color : black; \
+                                                        border-style : default; border-width : 0px; \
+                                                        border-radius : 19px; min-height: 3px; min-width: 5px}")
+            else:
+                self.trig_connection_state_label.setText('Connected')
+                self.trig_connection_led.setStyleSheet("QLabel {background-color : green; border-color : black; \
+                                                        border-style : default; border-width : 0px; \
+                                                        border-radius : 19px; min-height: 3px; min-width: 5px}")
+
+        self.connection_state_thread.update_state(self)
 
 if __name__=='__main__':
     app = QApplication(sys.argv)
