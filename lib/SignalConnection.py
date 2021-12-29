@@ -57,48 +57,29 @@ class LiveDisplay(QThread):
     
     def pause(self):
         self.running = False
+    
+    def stop(self):
+        self.running = False
+        self.quit()
+        self.wait(10000)
 
-class DevConnectionState(QThread):
-    dev_connection = pyqtSignal(bool, bool)
+class RefreshDevState(QThread):
+    refresh_dev_state = pyqtSignal(bool)
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.camera = parent.camera
-        self.trig = parent.trig
-        self.ic = parent.ic
-
-        self.camera_state = False
-        self.trig_state = False
-
         self.running = True
 
     def run(self):
         while self.running:
-            try:
-                print(self.camera, self.trig)
-            except:
-                print('asdfasdfasdfasdf')
-            # Check camera connection state
-            if self.ic.IC_IsDevValid(self.camera):
-                self.camera_state = True
-            else:
-                self.camera_state = False
-
-            # Check trigger device connection state
-            if self.trig is not None:
-                self.trig_state = True
-            else:
-                self.trig_state = False
-            
-            # Update event loop
-            self.dev_connection.emit(self.camera_state, self.trig_state)
-            print(self.camera_state, self.trig_state, '\n')
-            # check device connection state for every 5 sec
-            time.sleep(3)
-    
-    def update_state(self, parent):
-        self.camera = parent.camera
-        self.trig = parent.trig
+            # emit signal for refresh device state
+            self.refresh_dev_state.emit(True)
+            time.sleep(1)
 
     def pause(self):
         self.running = False
+
+    def stop(self):
+        self.running = False
+        self.quit()
+        self.wait(10000)
