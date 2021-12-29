@@ -74,7 +74,7 @@ class RefreshDevState(QThread):
         while self.running:
             # emit signal for refresh device state
             self.refresh_dev_state.emit(True)
-            time.sleep(1)
+            time.sleep(2)
 
     def pause(self):
         self.running = False

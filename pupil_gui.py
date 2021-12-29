@@ -12,10 +12,11 @@ from PyQt5.QtWidgets import QApplication, QBoxLayout, QDialog, QFileDialog, QFil
 from PyQt5.QtCore import QCoreApplication, QDate, QItemSelectionModel, Qt, \
                         QTime, pyqtSignal, QThread, pyqtSlot, QItemSelection, \
                         QDir
-from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent
+from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, QIntValidator
 from lib import tisgrabber as tis
 import numpy as np
 import ctypes
+import time
 
 sys.path.append('./lib')
 from lib.SignalConnection import LiveDisplay, RefreshDevState
@@ -23,7 +24,7 @@ from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
 
 
-class pupil(QMainWindow):
+class pupil(QMainWindow):    
     def __init__(self, height=500, width=500):
         super().__init__()
         self.height = 1400
@@ -97,7 +98,7 @@ class pupil(QMainWindow):
 
 class FileTreeView(QTreeView):
     key_pressed = pyqtSignal()
-
+    Nonce = 0
     def __init__(self):
         super().__init__()
         self.model = QFileSystemModel()
@@ -219,7 +220,39 @@ class FileTreeView(QTreeView):
                     if duplicate_check:
                         break
                 self.model.mkdir(parent, new_name)
+
+    def mk_exp_dir(self, exp_name: str):
+        # when one file is selected
+        if len(self.index)==1:
+            # if selected file is directory, the directory is set as parent
+            if self.model.isDir(self.index[0]):
+                parent = self.index[0]
+            # if selected file is not directory, set current directory as parent
+            else:
+                parent = self.model.index(self.current_dir)
+        # if more than one or no file is selected 
+        else:
+            # set current directory (working directory) as parent  
+            parent = self.model.index(self.current_dir)
+
+        # duplicate check
+        while True:
+            duplicate_check = True
+            for file in os.listdir(self.model.filePath(parent)):
+                if file==exp_name: # duplicate dir check
+                    # if there is same directory name, add nonce to exp name
+                    exp_name = f'{exp_name}_{self.Nonce:04d}'
+                    self.increase_nonce() # update new nonce
+                    duplicate_check = False
             
+            # if there is no duplicate dir, break the while loop
+            if duplicate_check:
+                break
+        self.model.mkdir(parent, exp_name)
+
+    def increase_nonce(self):
+        self.Nonce += 1
+
 class MainWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -243,7 +276,6 @@ class MainWidget(QWidget):
         # movie display
         self._add_movie_widget()
         
-
         '''
         control panel division
         '''
@@ -279,10 +311,8 @@ class MainWidget(QWidget):
 
         try:
             self.trig = InstantDiCtrl(self.dev_description)
-            print('exist trig')
         except:
             self.trig = None
-            print('No trig')
 
     # movie widget
     def _add_movie_widget(self):
@@ -406,30 +436,27 @@ class MainWidget(QWidget):
         self.live_btn = QPushButton('Live')
         self.stop_btn = QPushButton('Stop')
         self.set_trigger_btn = QPushButton('Set trigger')
-        self.duration_label = QLabel('Duration (s)')
-        self.acq_time_sec = QLineEdit()
-        self.num_frames_label = QLabel(f'{0} frames')
+        self.frames_label = QLabel('Frames')
+        self.acq_frames = QLineEdit()
         self.acq_time_min_label = QLabel(f'{0} min {0} sec')
 
         # align button and labels
         self.imaging_panel_layout.addWidget(self.live_btn, 0, 0, 1, 3)
         self.imaging_panel_layout.addWidget(self.stop_btn, 0, 3, 1, 3)
         self.imaging_panel_layout.addWidget(self.set_trigger_btn, 0, 6, 1, 3)
-        self.imaging_panel_layout.addWidget(self.duration_label, 2, 0, 1, 1)
-        self.imaging_panel_layout.addWidget(self.acq_time_sec, 2, 1, 1, -1)
-
-        self.imaging_panel_layout.addWidget(self.num_frames_label, 4, 0, 1, -1)
-        self.num_frames_label.setAlignment(Qt.AlignRight)
-        self.imaging_panel_layout.addWidget(self.acq_time_min_label, 5, 0, 1, -1)
+        self.imaging_panel_layout.addWidget(self.frames_label, 2, 0, 2, -1)
+        self.imaging_panel_layout.addWidget(self.acq_frames, 2, 2, 1, -1)
+        self.imaging_panel_layout.addWidget(self.acq_time_min_label, 4, 0, 1, -1)
         self.acq_time_min_label.setAlignment(Qt.AlignRight)
+        
 
         self.imaging_panel.setLayout(self.imaging_panel_layout)
 
         # connect live, stop button with camera
         self.live_btn.clicked.connect(self._resume_live_imaging)
         self.stop_btn.clicked.connect(self._stop_live_imaging)
-        self.acq_time_sec.setValidator(QDoubleValidator(0, 100, 3, self)) 
-        self.acq_time_sec.textChanged.connect(self._set_imaging_duration) # self.acq_time_sec.returnPressed.connect()
+        self.acq_frames.setValidator(QIntValidator(0, 10000000, self)) 
+        self.acq_frames.textChanged.connect(self._set_imaging_frames)
         self.set_trigger_btn.clicked.connect(self._set_recording)
         
     def _set_frame(self, layout):
@@ -500,15 +527,13 @@ class MainWidget(QWidget):
         self.live.pause()
 
     @pyqtSlot()
-    def _set_imaging_duration(self):
-        duration = self.acq_time_sec.text()
+    def _set_imaging_frames(self):
+        frames = self.acq_frames.text()
         try:
-            self.duration = float(duration) # sec
-            self.frames = int(np.floor(self.duration * self.frame_rate)) # frames
-            self.num_frames_label.setText(f'{self.frames:>20d} frames')
+            self.frames = int(frames)
+            self.duration = self.frames / self.frame_rate
             self.acq_time_min_label.setText(f'{self.duration//60:>20.0f} min {self.duration%60:>02.0f} sec')
         except:
-            self.num_frames_label.setText(f'0 frames')
             self.acq_time_min_label.setText(f'{0:>20.0f} min {0:>02.0f} sec')
 
     @pyqtSlot()
@@ -526,14 +551,24 @@ class MainWidget(QWidget):
         # ready to receive TTL signal after all devices are connected
         else:
             # check the No. of frames (or recording duration) to record
-            if self.frames <= 0:
+            if (self.acq_frames.text()=='') or (self.frames <= 0):
                 QMessageBox.about(self, 'Setting Error!', 'Enter the more than 1 frames')
-                self.acq_time_sec.text()
+                return
+            
             # check save path and dirctory name
-            # ready to get TTL trigger
-            # imaging
-            # save images
-            pass
+            if self.experiment_name_edit.text()=='':
+                default_exp_dir = f'New exp_{self.tree_view.Nonce:04d}'
+                self.tree_view.increase_nonce()
+                self.tree_view.mk_exp_dir(default_exp_dir)
+                self.experiment_name_edit.setText(default_exp_dir)
+            else:
+                self.tree_view.mk_exp_dir(self.experiment_name_edit.text())
+
+            # set save path
+            # ready TTL trigger, thread
+            # after TTL triger, display and take movie
+            # file save
+
 
     @pyqtSlot(bool)
     def _connection_state_view(self, refresh):
