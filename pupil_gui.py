@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import QApplication, QBoxLayout, QDialog, QFileDialog, QFil
                             QFrame, QGridLayout, QLabel, QGroupBox, QTextEdit, \
                             QLineEdit, QAbstractItemView, QTreeWidgetItem, \
                             QMessageBox
-from PyQt5.QtCore import QCoreApplication, QDate, QItemSelectionModel, Qt, \
+from PyQt5.QtCore import QCoreApplication, QDate, QEventLoop, QItemSelectionModel, Qt, \
                         QTime, pyqtSignal, QThread, pyqtSlot, QItemSelection, \
                         QDir
 from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, QIntValidator
@@ -19,7 +19,7 @@ import ctypes
 import time
 
 sys.path.append('./lib')
-from lib.SignalConnection import LiveDisplay, RefreshDevState
+from lib.SignalConnection import LiveDisplay, RefreshDevState, TriggeredRecording
 from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
 
@@ -299,7 +299,11 @@ class MainWidget(QWidget):
 
         # connect camera
         self.camera = tis.openDevice(self.ic)
-        self.frame_rate = 29.97
+        self.max_fps = float(29.970000)
+        self.min_fps = float(0.000001)
+        self.frame_rate = self.max_fps
+        # self.monitor_recording = False
+        self.img_size_GB = sys.getsizeof(np.zeros(shape=(1, 480, 720, 3))) / 2**30 # memory size of single frame image
     
     def _init_trigger(self):
         '''
@@ -436,17 +440,24 @@ class MainWidget(QWidget):
         self.live_btn = QPushButton('Live')
         self.stop_btn = QPushButton('Stop')
         self.set_trigger_btn = QPushButton('Set trigger')
+        self.cancel_trigger_btn = QPushButton('Trigger cancel ')
+        self.cancel_trigger_btn.setEnabled(False)
+        self.frame_rate_label = QLabel('Frame rate (Hz)')
+        self.set_frame_rate = QLineEdit()
         self.frames_label = QLabel('Frames')
         self.acq_frames = QLineEdit()
-        self.acq_time_min_label = QLabel(f'{0} min {0} sec')
+        self.acq_time_min_label = QLabel(f'{0} min {0} sec {0} GB')
 
         # align button and labels
         self.imaging_panel_layout.addWidget(self.live_btn, 0, 0, 1, 3)
         self.imaging_panel_layout.addWidget(self.stop_btn, 0, 3, 1, 3)
         self.imaging_panel_layout.addWidget(self.set_trigger_btn, 0, 6, 1, 3)
-        self.imaging_panel_layout.addWidget(self.frames_label, 2, 0, 2, -1)
-        self.imaging_panel_layout.addWidget(self.acq_frames, 2, 2, 1, -1)
-        self.imaging_panel_layout.addWidget(self.acq_time_min_label, 4, 0, 1, -1)
+        self.imaging_panel_layout.addWidget(self.cancel_trigger_btn, 0, 9, 1, 3)
+        self.imaging_panel_layout.addWidget(self.frame_rate_label, 1, 0, 1, 3)
+        self.imaging_panel_layout.addWidget(self.set_frame_rate, 1, 3, 1, -1)
+        self.imaging_panel_layout.addWidget(self.frames_label, 2, 0, 1, 3)
+        self.imaging_panel_layout.addWidget(self.acq_frames, 2, 3, 1, -1)
+        self.imaging_panel_layout.addWidget(self.acq_time_min_label, 3, 0, 1, -1)
         self.acq_time_min_label.setAlignment(Qt.AlignRight)
         
 
@@ -455,9 +466,12 @@ class MainWidget(QWidget):
         # connect live, stop button with camera
         self.live_btn.clicked.connect(self._resume_live_imaging)
         self.stop_btn.clicked.connect(self._stop_live_imaging)
-        self.acq_frames.setValidator(QIntValidator(0, 10000000, self)) 
+        self.acq_frames.setValidator(QIntValidator(0, 10000000, self)) # set available No. of frame range for recording
         self.acq_frames.textChanged.connect(self._set_imaging_frames)
+        self.set_frame_rate.setValidator(QDoubleValidator()) # set available frame rate
+        self.set_frame_rate.returnPressed.connect(self._set_frame_rate) 
         self.set_trigger_btn.clicked.connect(self._set_recording)
+        self.cancel_trigger_btn.clicked.connect(self._stop_trigger)
         
     def _set_frame(self, layout):
         '''
@@ -508,12 +522,6 @@ class MainWidget(QWidget):
     def _set_exp_name(self):
         self.current_path_label.setText(f'{self.tree_view.current_dir}')
 
-    @pyqtSlot(QImage)
-    def display_image(self, qimage):
-        self.live_pixmap = QPixmap.fromImage(qimage)
-        self.live_pixmap.scaled(720, 470, Qt.KeepAspectRatioByExpanding)
-        self.display_label.setPixmap(self.live_pixmap)
-    
     @pyqtSlot()
     def _resume_live_imaging(self):
         if not self.ic.IC_IsDevValid(self.camera):
@@ -528,13 +536,56 @@ class MainWidget(QWidget):
 
     @pyqtSlot()
     def _set_imaging_frames(self):
-        frames = self.acq_frames.text()
-        try:
-            self.frames = int(frames)
-            self.duration = self.frames / self.frame_rate
-            self.acq_time_min_label.setText(f'{self.duration//60:>20.0f} min {self.duration%60:>02.0f} sec')
-        except:
-            self.acq_time_min_label.setText(f'{0:>20.0f} min {0:>02.0f} sec')
+        if (self.set_frame_rate.text()=='') and (self.acq_frames.text() is not ''):
+            self.acq_frames.setText('')
+            QMessageBox.about(self, 'Notice!', f'You have to set the frame rate first')
+        
+        else:      
+            frames = self.acq_frames.text()
+            try:
+                self.frames = int(frames)
+                self.memory = self.frames * self.img_size_GB
+                self.duration = self.frames / self.frame_rate
+                self.acq_time_min_label.setText(f'{(self.duration//60)//60:>3.0f} hours {(self.duration//60)%60:>02.0f} min {self.duration%60:>02.0f} sec {self.memory:>03.3f} GB')
+            except:
+                self.acq_time_min_label.setText(f'{0:>3.0f} hours {0:>2.0f} min {0:>02.0f} sec {0:>04.0f} GB')
+
+    @pyqtSlot()
+    def _set_frame_rate(self):
+        frame_rate = float(self.set_frame_rate.text())
+
+        # if frame rate > 15 Hz, image monitoring is not available during recording
+        if frame_rate > 15: 
+            reply = QMessageBox.question(self, 'Notice!', 
+                                        'You can''t monitor the recording if the frame rate is larger than 15 Hz. \
+                                        Do you want to record without monitoring?',
+                                        QMessageBox.Yes | QMessageBox.No)
+            
+            # if yes, record movie without monitoring
+            if reply==QMessageBox.Yes:
+                if frame_rate > self.max_fps: # maximum frame rate is 29.97 Hz
+                    QMessageBox.about(self, 'Notice!', f'You have to set the frame rate smaller than maximum value ({self.max_fps} Hz)')
+                    frame_rate = self.max_fps
+                # self.monitor_recording = False
+
+            # if no, set frame rate as 15 Hz
+            else:
+                frame_rate = 15
+                # self.monitor_recording = True
+
+        # minimum frame rate is 0.000001 Hz
+        elif frame_rate < self.min_fps:
+            QMessageBox.about(self, 'Notice!', f'You have to set the frame rate larget than minimum value ({self.min_fps:.6f} Hz)')
+            frame_rate = self.min_fps
+            # self.monitor_recording = True
+
+        self.frame_rate = frame_rate
+        self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
+
+    @pyqtSlot()
+    def _stop_trigger(self):
+        self.triggered_recording.stop()
+        self._set_enable_inputs(True)
 
     @pyqtSlot()
     def _set_recording(self):
@@ -550,25 +601,69 @@ class MainWidget(QWidget):
 
         # ready to receive TTL signal after all devices are connected
         else:
+            # check whether the trigger device and TTL source are connected by BNC cable
+            _, data = self.trig.readAny(self.startPort, self.portCount)
+            if data==[255]:
+                QMessageBox.about(self, 'Connection Error!', 'Connect the trigger device to TTL source using BNC cable')
+                return
+
             # check the No. of frames (or recording duration) to record
             if (self.acq_frames.text()=='') or (self.frames <= 0):
                 QMessageBox.about(self, 'Setting Error!', 'Enter the more than 1 frames')
                 return
             
             # check save path and dirctory name
+            # 함수 쪼개기
+            # parent 확인 -> 입력된 폴더이름 중복 체크 -> exp name, path label update
             if self.experiment_name_edit.text()=='':
-                default_exp_dir = f'New exp_{self.tree_view.Nonce:04d}'
+                default_exp_dir = f'New exp'
                 self.tree_view.increase_nonce()
                 self.tree_view.mk_exp_dir(default_exp_dir)
                 self.experiment_name_edit.setText(default_exp_dir)
+                # self.current_path_label = QLabel(f'{self.tree_view.current_dir})/ # current path refresh
             else:
                 self.tree_view.mk_exp_dir(self.experiment_name_edit.text())
 
-            # set save path
-            # ready TTL trigger, thread
-            # after TTL triger, display and take movie
-            # file save
+            # disable any button and input during trigger
+            self._set_enable_inputs(False)
 
+            # ready TTL trigger
+            print(self.frame_rate)
+            if self.frame_rate > 15:
+                self.live.stop()
+            self.triggered_recording = TriggeredRecording(self)
+            self.triggered_recording.start()
+
+            # if the device receive TTL signal, start recording 
+            # during the recording, show the live display and cumulate movie frames
+            # self.triggered_recording.Pixmap_display.connect(self.display_image)
+
+    def _set_enable_inputs(self, enable : bool=True):
+        # button and line edit on file system panel
+        self.tree_view.setEnabled(enable)
+        self.file_browser_btn.setEnabled(enable)
+        self.cd_parent_btn.setEnabled(enable)
+        self.rename_btn.setEnabled(enable)
+        self.del_btn.setEnabled(enable)
+        self.mkdir_btn.setEnabled(enable)
+        self.experiment_name_edit.setEnabled(enable)
+
+        # button and line edit on imaging control panel
+        self.live_btn.setEnabled(enable)
+        self.stop_btn.setEnabled(enable)
+        self.acq_frames.setEnabled(enable)
+        self.set_trigger_btn.setEnabled(enable)
+        self.cancel_trigger_btn.setEnabled(not enable)
+        
+
+    '''
+    functions (slots) resppond to Thread
+    '''
+    @pyqtSlot(QImage)
+    def display_image(self, qimage):
+        self.live_pixmap = QPixmap.fromImage(qimage)
+        self.live_pixmap.scaled(720, 470, Qt.KeepAspectRatioByExpanding)
+        self.display_label.setPixmap(self.live_pixmap)
 
     @pyqtSlot(bool)
     def _connection_state_view(self, refresh):
@@ -597,6 +692,7 @@ class MainWidget(QWidget):
                 self.trig_connection_led.setStyleSheet("QLabel {background-color : red; border-color : black; \
                                                         border-style : default; border-width : 0px; \
                                                         border-radius : 19px; min-height: 3px; min-width: 5px}")
+ 
 
 if __name__=='__main__':
     app = QApplication(sys.argv)
