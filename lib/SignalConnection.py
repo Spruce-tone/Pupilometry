@@ -88,12 +88,14 @@ class RefreshDevState(QThread):
         self.wait(10000)
 
 class TriggeredRecording(QThread):
-    Pixmap_display = pyqtSignal(QImage)
+    recording_termination = pyqtSignal()
+    save_img = pyqtSignal(int, np.ndarray)
 
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
         self.running = True
+        self.keep_recording = True
 
         self.camera = parent.camera
         self.ic = parent.ic
@@ -122,17 +124,13 @@ class TriggeredRecording(QThread):
         # Calculate the buffer size    
         self.bpp = int(self.BitsPerPixel.value / 8.0 )
         self.buffer_size = self.Width.value * self.Height.value * self.BitsPerPixel.value
-
-        # define movie container
-        movie = np.zeros(shape=(self.parent.frames,
-                                self.Height.value,
-                                self.Width.value,
-                                self.bpp))
-                                
+              
         loop_start = time.time()
         for idx in range(self.parent.frames):
             frame_start = time.time()
-            print(idx)
+            if not self.keep_recording:
+                return
+
             if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
                 # Get the image data
                 imagePtr =  self.ic.IC_GetImagePtr(self.camera)
@@ -148,21 +146,15 @@ class TriggeredRecording(QThread):
 
                 # correct channel order                                
                 img[:, :, :] = img[:, :, ::-1]
-
-                # insert image into movie container
-                movie[idx, :, :, :] = img 
-
-                # # emit image for live display
-                # qimage = QImage(img.data, img.shape[1], img.shape[0], img.strides[0],  QImage.Format_RGB888)
-                # self.Pixmap_display.emit(qimage)
+                self.save_img.emit(idx, img)
 
             frame_end = time.time()
-            dur = frame_end - frame_start
-            print(f'{dur:.4f}, {1/self.parent.frame_rate:.4f}, dur, set frame rate')
-            if dur < (1 / self.parent.frame_rate):
-                sleep_time = (1/self.parent.frame_rate) - dur
-                print(f'sleep {sleep_time:.4f} s')
+            capture_duration = frame_end - frame_start
+            # print(f'{dur:.4f}, {1/self.parent.frame_rate:.4f}, dur, set frame rate')
+            if capture_duration < (1 / self.parent.frame_rate):
+                sleep_time = (1/self.parent.frame_rate) - capture_duration
                 time.sleep(sleep_time)
+            print(idx, sleep_time)
 
         loop_end = time.time()
         loop_dur = loop_end - loop_start
@@ -170,11 +162,14 @@ class TriggeredRecording(QThread):
         print(f'frame rates : {self.parent.frames / (loop_end - loop_start):.5f} fps')
         print(f'error {loop_dur - 1 / self.parent.frame_rate * self.parent.frames:.5f} s')
         print(f'error {100 * (loop_dur - 1 / self.parent.frame_rate * self.parent.frames) / (1 / self.parent.frame_rate * self.parent.frames):.05f} %')
-            
+
+        self.recording_termination.emit()
+
     def pause(self):
         self.running =False
     
     def stop(self):
         self.running = False
+        self.keep_recording = False
         self.quit()
         self.wait(10000)

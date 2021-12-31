@@ -1,6 +1,4 @@
-import sys
-import os
-import shutil
+import sys, os, shutil, time, ctypes, re
 from typing import Union, List, Tuple, Set, Dict
 from PyQt5.QtWidgets import QApplication, QBoxLayout, QDialog, QFileDialog, QFileSystemModel, \
                             QInputDialog, QSplitter, QTreeView, QTreeWidget, QWidget, QPushButton, \
@@ -8,15 +6,16 @@ from PyQt5.QtWidgets import QApplication, QBoxLayout, QDialog, QFileDialog, QFil
                             QDesktopWidget, QHBoxLayout, QVBoxLayout, \
                             QFrame, QGridLayout, QLabel, QGroupBox, QTextEdit, \
                             QLineEdit, QAbstractItemView, QTreeWidgetItem, \
-                            QMessageBox
+                            QMessageBox, QDoubleSpinBox
 from PyQt5.QtCore import QCoreApplication, QDate, QEventLoop, QItemSelectionModel, Qt, \
                         QTime, pyqtSignal, QThread, pyqtSlot, QItemSelection, \
                         QDir
 from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, QIntValidator
 from lib import tisgrabber as tis
 import numpy as np
-import ctypes
-import time
+from skimage import io
+from datetime import datetime
+
 
 sys.path.append('./lib')
 from lib.SignalConnection import LiveDisplay, RefreshDevState, TriggeredRecording
@@ -190,7 +189,7 @@ class FileTreeView(QTreeView):
         self.setRootIndex(self.model.index(self.current_dir))
 
     @pyqtSlot()
-    def _mkdir(self):
+    def _mk_new_dir(self):
         if len(self.index) >= 2:
             return
         else:
@@ -221,7 +220,7 @@ class FileTreeView(QTreeView):
                         break
                 self.model.mkdir(parent, new_name)
 
-    def mk_exp_dir(self, exp_name: str):
+    def get_parent_dir(self) -> str:
         # when one file is selected
         if len(self.index)==1:
             # if selected file is directory, the directory is set as parent
@@ -235,20 +234,36 @@ class FileTreeView(QTreeView):
             # set current directory (working directory) as parent  
             parent = self.model.index(self.current_dir)
 
+        return parent
+
+    def mk_exp_dir(self, parent : str, exp_name: str):
+        # analyze name for duplication check
+        dir_filter = re.compile('(?P<nonce>_\d{4})')
+        filtered_name = dir_filter.search(exp_name)
+
+        # add nonce to file name if no nonce
+        if filtered_name==None:
+            # if there is same directory name, add nonce to exp name
+            exp_name = f'{exp_name}_{self.Nonce:04d}'
+
         # duplicate check
         while True:
             duplicate_check = True
             for file in os.listdir(self.model.filePath(parent)):
                 if file==exp_name: # duplicate dir check
-                    # if there is same directory name, add nonce to exp name
-                    exp_name = f'{exp_name}_{self.Nonce:04d}'
-                    self.increase_nonce() # update new nonce
+                    
+                    exp_name = dir_filter.sub(f'_{self.Nonce:04d}', exp_name)
+                    self.increase_nonce() # update new nonce    
+
                     duplicate_check = False
             
             # if there is no duplicate dir, break the while loop
             if duplicate_check:
                 break
-        self.model.mkdir(parent, exp_name)
+        
+        self.exp_name = exp_name
+        self.increase_nonce() # update new nonce           
+        self.model.mkdir(parent, self.exp_name)
 
     def increase_nonce(self):
         self.Nonce += 1
@@ -301,8 +316,8 @@ class MainWidget(QWidget):
         self.camera = tis.openDevice(self.ic)
         self.max_fps = float(29.970000)
         self.min_fps = float(0.000001)
-        self.frame_rate = self.max_fps
-        # self.monitor_recording = False
+        self.frame_rate = 2
+        self.frames = 550
         self.img_size_GB = sys.getsizeof(np.zeros(shape=(1, 480, 720, 3))) / 2**30 # memory size of single frame image
     
     def _init_trigger(self):
@@ -422,8 +437,9 @@ class MainWidget(QWidget):
         self.del_btn.clicked.connect(self.tree_view._delete)
         self.cd_parent_btn.clicked.connect(self.tree_view._mvoe_parent_dir)
         self.file_browser_btn.clicked.connect(self.tree_view._file_browser)
-        self.mkdir_btn.clicked.connect(self.tree_view._mkdir)
+        self.mkdir_btn.clicked.connect(self.tree_view._mk_new_dir)
         self.experiment_name_edit.textChanged.connect(self._set_exp_name)
+        self.experiment_name_edit.setText('Exp_0000')
 
         self.file_panel.setLayout(self.file_panel_layout)
 
@@ -466,10 +482,20 @@ class MainWidget(QWidget):
         # connect live, stop button with camera
         self.live_btn.clicked.connect(self._resume_live_imaging)
         self.stop_btn.clicked.connect(self._stop_live_imaging)
+
+        self.set_frame_rate.setValidator(QDoubleValidator()) # set frame rate format : double
+        self.set_frame_rate.editingFinished.connect(self._set_frame_rate)
+        # set default frame rate
+        if self.set_frame_rate.text()=='':
+            self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
+            self.set_frame_rate.completer()
+
         self.acq_frames.setValidator(QIntValidator(0, 10000000, self)) # set available No. of frame range for recording
         self.acq_frames.textChanged.connect(self._set_imaging_frames)
-        self.set_frame_rate.setValidator(QDoubleValidator()) # set available frame rate
-        self.set_frame_rate.returnPressed.connect(self._set_frame_rate) 
+        # set default frame numbers
+        if self.acq_frames.text()=='':
+            self.acq_frames.setText(f'{self.frames}')
+            self.acq_frames.completer()
         self.set_trigger_btn.clicked.connect(self._set_recording)
         self.cancel_trigger_btn.clicked.connect(self._stop_trigger)
         
@@ -515,6 +541,24 @@ class MainWidget(QWidget):
         self.splt1.setSizes([100, 100])
         self.main_layout.addWidget(self.splt2)
     
+    def _set_enable_inputs(self, enable : bool=True):
+        # button and line edit on file system panel
+        self.tree_view.setEnabled(enable)
+        self.file_browser_btn.setEnabled(enable)
+        self.cd_parent_btn.setEnabled(enable)
+        self.rename_btn.setEnabled(enable)
+        self.del_btn.setEnabled(enable)
+        self.mkdir_btn.setEnabled(enable)
+        self.experiment_name_edit.setEnabled(enable)
+
+        # button and line edit on imaging control panel
+        self.live_btn.setEnabled(enable)
+        self.stop_btn.setEnabled(enable)
+        self.acq_frames.setEnabled(enable)
+        self.set_frame_rate.setEnabled(enable)
+        self.set_trigger_btn.setEnabled(enable)
+        self.cancel_trigger_btn.setEnabled(not enable)
+
     '''
     signal slots
     '''
@@ -536,7 +580,7 @@ class MainWidget(QWidget):
 
     @pyqtSlot()
     def _set_imaging_frames(self):
-        if (self.set_frame_rate.text()=='') and (self.acq_frames.text() is not ''):
+        if (self.set_frame_rate.text()=='') and (self.acq_frames.text()!=''):
             self.acq_frames.setText('')
             QMessageBox.about(self, 'Notice!', f'You have to set the frame rate first')
         
@@ -552,35 +596,20 @@ class MainWidget(QWidget):
 
     @pyqtSlot()
     def _set_frame_rate(self):
+        # get frame rate from line edit input
         frame_rate = float(self.set_frame_rate.text())
 
-        # if frame rate > 15 Hz, image monitoring is not available during recording
-        if frame_rate > 15: 
-            reply = QMessageBox.question(self, 'Notice!', 
-                                        'You can''t monitor the recording if the frame rate is larger than 15 Hz. \
-                                        Do you want to record without monitoring?',
-                                        QMessageBox.Yes | QMessageBox.No)
-            
-            # if yes, record movie without monitoring
-            if reply==QMessageBox.Yes:
-                if frame_rate > self.max_fps: # maximum frame rate is 29.97 Hz
-                    QMessageBox.about(self, 'Notice!', f'You have to set the frame rate smaller than maximum value ({self.max_fps} Hz)')
-                    frame_rate = self.max_fps
-                # self.monitor_recording = False
-
-            # if no, set frame rate as 15 Hz
-            else:
-                frame_rate = 15
-                # self.monitor_recording = True
-
-        # minimum frame rate is 0.000001 Hz
+        # restrict the frame rate betweent 0.000001 and 29.97 Hz
+        if frame_rate > self.max_fps:
+            QMessageBox.about(self, 'Notice!', f'The maximum frame rate is {self.max_fps:.2f} Hz')
+            frame_rate = self.max_fps
         elif frame_rate < self.min_fps:
-            QMessageBox.about(self, 'Notice!', f'You have to set the frame rate larget than minimum value ({self.min_fps:.6f} Hz)')
             frame_rate = self.min_fps
-            # self.monitor_recording = True
 
+        # set frame rate and terminate
         self.frame_rate = frame_rate
         self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
+        self.set_frame_rate.completer()
 
     @pyqtSlot()
     def _stop_trigger(self):
@@ -612,48 +641,66 @@ class MainWidget(QWidget):
                 QMessageBox.about(self, 'Setting Error!', 'Enter the more than 1 frames')
                 return
             
-            # check save path and dirctory name
-            # 함수 쪼개기
-            # parent 확인 -> 입력된 폴더이름 중복 체크 -> exp name, path label update
-            if self.experiment_name_edit.text()=='':
-                default_exp_dir = f'New exp'
-                self.tree_view.increase_nonce()
-                self.tree_view.mk_exp_dir(default_exp_dir)
-                self.experiment_name_edit.setText(default_exp_dir)
-                # self.current_path_label = QLabel(f'{self.tree_view.current_dir})/ # current path refresh
-            else:
-                self.tree_view.mk_exp_dir(self.experiment_name_edit.text())
+            # check parent directory to save recording
+            self.parent_idx = self.tree_view.get_parent_dir()
 
+            # if the parent dir is determined, refresh save path
+            self.current_path_label.setText(self.tree_view.model.filePath(self.parent_idx))
+
+            # if no input at experiment name, set default name as 'Exp'
+            if self.experiment_name_edit.text()=='':
+                save_dir_name = 'Exp'
+                self.experiment_name_edit.setText(save_dir_name)
+            else:
+                save_dir_name = self.experiment_name_edit.text()
+
+            # make dir to save images
+            self.tree_view.mk_exp_dir(self.parent_idx, save_dir_name)            
+
+            # if frame rate is larger than 15 Hz
+            # user have to select whether start recording with or without  monitoring
+            # if user want to monitor, the frame rate is set to 15 Hz 
+            if self.frame_rate > 15:
+                reply = QMessageBox.question(self, 'Notice!', 
+                                            'You can''t monitor the recording if the frame rate is larger than 15 Hz. \
+                                            Do you want to record without monitoring?',
+                                            QMessageBox.Yes | QMessageBox.No)
+                
+                # if yes, record movie without monitoring
+                if reply==QMessageBox.Yes:
+                    self.live.stop()
+                else:
+                    self.frame_rate = 15
+                    self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
+                    self.set_frame_rate.completer()
+            
             # disable any button and input during trigger
             self._set_enable_inputs(False)
-
+            
             # ready TTL trigger
-            print(self.frame_rate)
-            if self.frame_rate > 15:
-                self.live.stop()
+            # if the device receive TTL signal, start recording 
             self.triggered_recording = TriggeredRecording(self)
             self.triggered_recording.start()
+            self.triggered_recording.recording_termination.connect(self._stop_trigger)
+            self.triggered_recording.save_img.connect(self._save_img)
 
-            # if the device receive TTL signal, start recording 
-            # during the recording, show the live display and cumulate movie frames
-            # self.triggered_recording.Pixmap_display.connect(self.display_image)
+    @pyqtSlot(int, np.ndarray)
+    def _save_img(self, idx : int, img : np.ndarray):
+        print(idx)
+        save_dir = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}'
+        current_time = datetime.now()
+        current_time = current_time.strftime('%Y-%m-%d_%Hhr-%Mmin-%Ssec')
+        img_name = f'{idx:05d}_{current_time}.tif'
 
-    def _set_enable_inputs(self, enable : bool=True):
-        # button and line edit on file system panel
-        self.tree_view.setEnabled(enable)
-        self.file_browser_btn.setEnabled(enable)
-        self.cd_parent_btn.setEnabled(enable)
-        self.rename_btn.setEnabled(enable)
-        self.del_btn.setEnabled(enable)
-        self.mkdir_btn.setEnabled(enable)
-        self.experiment_name_edit.setEnabled(enable)
+        file_name = os.path.join(save_dir, img_name)
+        print(file_name)
+        print(img.shape)
+        print(save_dir)
+        print(current_time)
+        print(img_name, '\n')
+        io.imsave(file_name, img)
 
-        # button and line edit on imaging control panel
-        self.live_btn.setEnabled(enable)
-        self.stop_btn.setEnabled(enable)
-        self.acq_frames.setEnabled(enable)
-        self.set_trigger_btn.setEnabled(enable)
-        self.cancel_trigger_btn.setEnabled(not enable)
+
         
 
     '''
