@@ -1,20 +1,18 @@
-import sys, os, shutil, time, ctypes, re
+import sys, os, shutil, ctypes, re
 from typing import Union, List, Tuple, Set, Dict
-from PyQt5.QtWidgets import QApplication, QBoxLayout, QDialog, QFileDialog, QFileSystemModel, \
-                            QInputDialog, QSplitter, QTreeView, QTreeWidget, QWidget, QPushButton, \
-                            QToolTip, QMainWindow, QAction, qApp, \
+from PyQt5.QtWidgets import QApplication, QFileDialog, QFileSystemModel, \
+                            QInputDialog, QSplitter, QTreeView, QWidget, QPushButton, \
+                            QMainWindow, QAction, qApp, \
                             QDesktopWidget, QHBoxLayout, QVBoxLayout, \
-                            QFrame, QGridLayout, QLabel, QGroupBox, QTextEdit, \
-                            QLineEdit, QAbstractItemView, QTreeWidgetItem, \
-                            QMessageBox, QDoubleSpinBox
-from PyQt5.QtCore import QCoreApplication, QDate, QEventLoop, QItemSelectionModel, Qt, \
-                        QTime, pyqtSignal, QThread, pyqtSlot, QItemSelection, \
-                        QDir
+                            QFrame, QGridLayout, QLabel, QGroupBox, \
+                            QLineEdit, QAbstractItemView, QMessageBox
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, QIntValidator
 from lib import tisgrabber as tis
 import numpy as np
 from skimage import io
 from datetime import datetime
+import cv2
 
 
 sys.path.append('./lib')
@@ -26,8 +24,8 @@ from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 class pupil(QMainWindow):    
     def __init__(self, height=500, width=500):
         super().__init__()
-        self.height = 1400
-        self.width = 1600
+        self.H = 1400
+        self.W = 1600
         
         # define main widget
         self.main_widget = MainWidget()
@@ -52,7 +50,7 @@ class pupil(QMainWindow):
         # top left=(0, 0)
         # as go from left to right, x increases
         # as go from top to bottom, y increases
-        self.resize(self.width, self.height)
+        self.resize(self.W, self.H)
 
     def _windowcenter(self):
         window_geometry = self.frameGeometry()
@@ -318,7 +316,12 @@ class MainWidget(QWidget):
         self.min_fps = float(0.000001)
         self.frame_rate = 2
         self.frames = 550
-        self.img_size_GB = sys.getsizeof(np.zeros(shape=(1, 480, 720, 3))) / 2**30 # memory size of single frame image
+        self.img_height = 720
+        self.img_width = 480
+        self.img_channels = 3
+        # size of single frame image in GB
+        # 24 bit, 480 x 720 pixels RGB image
+        self.img_size_GB = self.img_width * self.img_height * 24 / 8 / 2**30 
     
     def _init_trigger(self):
         '''
@@ -439,7 +442,7 @@ class MainWidget(QWidget):
         self.file_browser_btn.clicked.connect(self.tree_view._file_browser)
         self.mkdir_btn.clicked.connect(self.tree_view._mk_new_dir)
         self.experiment_name_edit.textChanged.connect(self._set_exp_name)
-        self.experiment_name_edit.setText('Exp_0000')
+        self.experiment_name_edit.setText('Exp')
 
         self.file_panel.setLayout(self.file_panel_layout)
 
@@ -462,6 +465,7 @@ class MainWidget(QWidget):
         self.set_frame_rate = QLineEdit()
         self.frames_label = QLabel('Frames')
         self.acq_frames = QLineEdit()
+        self.progress_check = QLabel(f'Progress | {0:06d}/{self.frames:06d}')
         self.acq_time_min_label = QLabel(f'{0} min {0} sec {0} GB')
 
         # align button and labels
@@ -473,6 +477,7 @@ class MainWidget(QWidget):
         self.imaging_panel_layout.addWidget(self.set_frame_rate, 1, 3, 1, -1)
         self.imaging_panel_layout.addWidget(self.frames_label, 2, 0, 1, 3)
         self.imaging_panel_layout.addWidget(self.acq_frames, 2, 3, 1, -1)
+        self.imaging_panel_layout.addWidget(self.progress_check, 3, 0, 1, 3)
         self.imaging_panel_layout.addWidget(self.acq_time_min_label, 3, 0, 1, -1)
         self.acq_time_min_label.setAlignment(Qt.AlignRight)
         
@@ -490,7 +495,7 @@ class MainWidget(QWidget):
             self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
             self.set_frame_rate.completer()
 
-        self.acq_frames.setValidator(QIntValidator(0, 10000000, self)) # set available No. of frame range for recording
+        self.acq_frames.setValidator(QIntValidator(0, 1000000, self)) # set available No. of frame range for recording
         self.acq_frames.textChanged.connect(self._set_imaging_frames)
         # set default frame numbers
         if self.acq_frames.text()=='':
@@ -591,6 +596,7 @@ class MainWidget(QWidget):
                 self.memory = self.frames * self.img_size_GB
                 self.duration = self.frames / self.frame_rate
                 self.acq_time_min_label.setText(f'{(self.duration//60)//60:>3.0f} hours {(self.duration//60)%60:>02.0f} min {self.duration%60:>02.0f} sec {self.memory:>03.3f} GB')
+                self.progress_check.setText(f'frames({0:06d}/{self.frames:06d})')
             except:
                 self.acq_time_min_label.setText(f'{0:>3.0f} hours {0:>2.0f} min {0:>02.0f} sec {0:>04.0f} GB')
 
@@ -615,6 +621,7 @@ class MainWidget(QWidget):
     def _stop_trigger(self):
         self.triggered_recording.stop()
         self._set_enable_inputs(True)
+        self.video.release()
 
     @pyqtSlot()
     def _set_recording(self):
@@ -684,24 +691,42 @@ class MainWidget(QWidget):
             self.triggered_recording.recording_termination.connect(self._stop_trigger)
             self.triggered_recording.save_img.connect(self._save_img)
 
+            # generate video
+            video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG') # set codec  
+            self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_height, self.img_width))
+
+    
     @pyqtSlot(int, np.ndarray)
     def _save_img(self, idx : int, img : np.ndarray):
-        print(idx)
+        # set save path and image name
         save_dir = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}'
         current_time = datetime.now()
         current_time = current_time.strftime('%Y-%m-%d_%Hhr-%Mmin-%Ssec')
-        img_name = f'{idx:05d}_{current_time}.tif'
+        img_name = f'{idx:06d}_{current_time}.tif'
 
+        # update recording progress
+        self.progress_check.setText(f'Progress | {idx+1:06d}/{self.frames:06d}')
+        
+        # save image
         file_name = os.path.join(save_dir, img_name)
-        print(file_name)
-        print(img.shape)
-        print(save_dir)
-        print(current_time)
-        print(img_name, '\n')
         io.imsave(file_name, img)
 
-
+        # save directory and file name check
+        # print(file_name)
+        # print(img.shape)
+        # print(save_dir)
+        # print(current_time)
+        # print(img_name, '\n')
         
+        # wirte video
+        self.video.write(img)
+        if idx==(self.frames - 1):
+            self.video.release()
+
+            # reset progress monitor
+            self.progress_check.setText(f'Progress | {0:06d}/{self.frames:06d}')
+
 
     '''
     functions (slots) resppond to Thread
@@ -709,7 +734,7 @@ class MainWidget(QWidget):
     @pyqtSlot(QImage)
     def display_image(self, qimage):
         self.live_pixmap = QPixmap.fromImage(qimage)
-        self.live_pixmap.scaled(720, 470, Qt.KeepAspectRatioByExpanding)
+        self.live_pixmap.scaled(720, 480, Qt.KeepAspectRatioByExpanding)
         self.display_label.setPixmap(self.live_pixmap)
 
     @pyqtSlot(bool)

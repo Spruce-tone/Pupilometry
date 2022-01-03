@@ -125,6 +125,7 @@ class TriggeredRecording(QThread):
         self.bpp = int(self.BitsPerPixel.value / 8.0 )
         self.buffer_size = self.Width.value * self.Height.value * self.BitsPerPixel.value
               
+
         loop_start = time.time()
         for idx in range(self.parent.frames):
             frame_start = time.time()
@@ -150,18 +151,20 @@ class TriggeredRecording(QThread):
 
             frame_end = time.time()
             capture_duration = frame_end - frame_start
-            # print(f'{dur:.4f}, {1/self.parent.frame_rate:.4f}, dur, set frame rate')
+            
+            # give time delay to adjust frame rate
             if capture_duration < (1 / self.parent.frame_rate):
                 sleep_time = (1/self.parent.frame_rate) - capture_duration
                 time.sleep(sleep_time)
-            print(idx, sleep_time)
-
+            
         loop_end = time.time()
         loop_dur = loop_end - loop_start
-        print(f'finish_imaging : {loop_end - loop_start:.5f} sec')
-        print(f'frame rates : {self.parent.frames / (loop_end - loop_start):.5f} fps')
-        print(f'error {loop_dur - 1 / self.parent.frame_rate * self.parent.frames:.5f} s')
-        print(f'error {100 * (loop_dur - 1 / self.parent.frame_rate * self.parent.frames) / (1 / self.parent.frame_rate * self.parent.frames):.05f} %')
+
+        # calculate frame rate
+        # print(f'finish_imaging : {loop_end - loop_start:.5f} sec')
+        # print(f'frame rates : {self.parent.frames / (loop_end - loop_start):.5f} fps')
+        # print(f'error {loop_dur - 1 / self.parent.frame_rate * self.parent.frames:.5f} s')
+        # print(f'error {100 * (loop_dur - 1 / self.parent.frame_rate * self.parent.frames) / (1 / self.parent.frame_rate * self.parent.frames):.05f} %')
 
         self.recording_termination.emit()
 
