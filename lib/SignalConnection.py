@@ -1,11 +1,9 @@
-from PyQt5.QtCore import pyqtSignal, QThread, Qt
+from PyQt5.QtCore import pyqtSignal, QThread
 from PyQt5.QtGui import QImage
 from lib import tisgrabber as tis
 import numpy as np
 import ctypes
 import time
-
-from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
 
 class LiveDisplay(QThread):
@@ -49,9 +47,9 @@ class LiveDisplay(QThread):
                                 self.Width.value,
                                 self.bpp))
 
+
                 # correct channel order                                
                 img[:, :, :] = img[:, :, ::-1]
-
                 qimage = QImage(img.data, img.shape[1], img.shape[0], img.strides[0],  QImage.Format_RGB888)
                 self.Pixmap_display.emit(qimage)
       

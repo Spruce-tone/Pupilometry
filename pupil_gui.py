@@ -306,7 +306,8 @@ class MainWidget(QWidget):
         initialize and connect camera
         '''
         # load library for camera control
-        self.ic = ctypes.cdll.LoadLibrary('./lib/tisgrabber_x64.dll')
+        # self.ic = ctypes.cdll.LoadLibrary('./lib/tisgrabber_x64.dll')
+        self.ic = ctypes.CDLL('./lib/tisgrabber_x64.dll')
         tis.declareFunctions(self.ic)
         self.ic.IC_InitLibrary(0)
 
@@ -596,7 +597,7 @@ class MainWidget(QWidget):
                 self.memory = self.frames * self.img_size_GB
                 self.duration = self.frames / self.frame_rate
                 self.acq_time_min_label.setText(f'{(self.duration//60)//60:>3.0f} hours {(self.duration//60)%60:>02.0f} min {self.duration%60:>02.0f} sec {self.memory:>03.3f} GB')
-                self.progress_check.setText(f'frames({0:06d}/{self.frames:06d})')
+                self.progress_check.setText(f'Progress | {0:06d}/{self.frames:06d}')
             except:
                 self.acq_time_min_label.setText(f'{0:>3.0f} hours {0:>2.0f} min {0:>02.0f} sec {0:>04.0f} GB')
 
@@ -699,6 +700,12 @@ class MainWidget(QWidget):
     
     @pyqtSlot(int, np.ndarray)
     def _save_img(self, idx : int, img : np.ndarray):
+        '''
+        idx: 
+            index of image
+        img:
+            recorded image
+        '''
         # set save path and image name
         save_dir = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}'
         current_time = datetime.now()
@@ -733,6 +740,10 @@ class MainWidget(QWidget):
     '''
     @pyqtSlot(QImage)
     def display_image(self, qimage):
+        '''
+        QImage:
+            recorded image for live display
+        '''
         self.live_pixmap = QPixmap.fromImage(qimage)
         self.live_pixmap.scaled(720, 480, Qt.KeepAspectRatioByExpanding)
         self.display_label.setPixmap(self.live_pixmap)

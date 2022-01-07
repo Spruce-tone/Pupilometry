@@ -7,3 +7,5 @@ adventech
 IC-Imaging-Control
 env
 __pycache__
+build
+dist
