@@ -4,9 +4,9 @@ block_cipher = None
 
 
 a = Analysis(['pupil_gui.py'],
-             pathex=['E:\\Spruce Dropbox\\Jo Yongjae\\Notebook\\programming\\python\\pupil',
-             'E:\\Spruce Dropbox\\Jo Yongjae\\Notebook\\programming\\python\\pupil\\lib',
-             'E:\\Spruce Dropbox\\Jo Yongjae\\Notebook\\programming\\python\\pupil\\lib\\Automation'],
+             pathex=['.',
+             '.\\lib',
+             '.\\lib\\Automation'],
              binaries=[('lib\\tisgrabber_x64.dll', '.'),
                         ('lib\\TIS.Imaging.ICImagingControl35.dll', '.'),
                         ('lib\\TIS_UDSHL11_x64.dll', '.')],
