@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  python38:
+    build:
+        context: .
+        dockerfile: Dockerfile
+    container_name: pyinstaller
+    volumes:
+    - ".:/data"
+    ports:
+    - "8888:8888"
+    
+    stdin_open: true
+    tty: true
