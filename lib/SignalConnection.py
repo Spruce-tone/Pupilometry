@@ -157,7 +157,6 @@ class TriggeredRecording(QThread):
             
         # loop_end = time.time()
         # loop_dur = loop_end - loop_start
-
         # calculate frame rate
         # print(f'finish_imaging : {loop_end - loop_start:.5f} sec')
         # print(f'frame rates : {self.parent.frames / (loop_end - loop_start):.5f} fps')
