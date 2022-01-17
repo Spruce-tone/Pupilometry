@@ -73,12 +73,6 @@ class pupil(QMainWindow):
         self.main_widget.live.stop()
         qApp.quit()
 
-
-
-
-
- 
-
 if __name__=='__main__':
     app = QApplication(sys.argv)
     ex = pupil()

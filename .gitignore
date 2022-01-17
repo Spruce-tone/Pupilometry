@@ -9,3 +9,6 @@ env
 __pycache__
 build
 dist
+*.tif
+*.avi
+./pupil movie/

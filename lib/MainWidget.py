@@ -12,7 +12,7 @@ from skimage import io
 from datetime import datetime
 import cv2
 sys.path.append('./lib')
-from lib.SignalConnection import LiveDisplay, RefreshDevState, TriggeredRecording
+from lib.SignalConnection import LiveDisplay, RefreshDevState, TriggeredRecording, StartRecording
 from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
 class MainWidget(QWidget):
@@ -261,8 +261,8 @@ class MainWidget(QWidget):
             self.acq_frames.completer()
 
         self.set_trigger_btn.clicked.connect(self._set_recording)
-        self.cancel_btn.clicked.connect(self._stop_trigger)
-        self.recording_btn.clicked.connect(self._set_recording)
+        self.cancel_btn.clicked.connect(self._stop_recording)
+        self.recording_btn.clicked.connect(self._start_recording) ### make recording signal ############ in progress
         
     def _set_frame(self, layout):
         '''
@@ -321,6 +321,7 @@ class MainWidget(QWidget):
         self.stop_btn.setEnabled(enable)
         self.acq_frames.setEnabled(enable)
         self.set_frame_rate.setEnabled(enable)
+        self.recording_btn.setEnabled(enable)
         self.set_trigger_btn.setEnabled(enable)
         self.cancel_btn.setEnabled(not enable)
 
@@ -380,8 +381,11 @@ class MainWidget(QWidget):
         self.set_frame_rate.completer()
 
     @pyqtSlot()
-    def _stop_trigger(self):
-        self.triggered_recording.stop()
+    def _stop_recording(self):
+        if self.recording_type=='Triggered':
+            self.triggered_recording.stop()
+        elif self.recording_type=='NonTriggered':
+            self.start_recording.stop()
         self._set_enable_inputs(True)
         self.video.release()
 
@@ -452,9 +456,10 @@ class MainWidget(QWidget):
             
             # ready TTL trigger
             # if the device receive TTL signal, start recording 
+            self.recording_type = 'Triggered'
             self.triggered_recording = TriggeredRecording(self)
             self.triggered_recording.start()
-            self.triggered_recording.recording_termination.connect(self._stop_trigger)
+            self.triggered_recording.recording_termination.connect(self._stop_recording)
             self.triggered_recording.save_img.connect(self._save_img)
 
             # generate video
@@ -462,9 +467,74 @@ class MainWidget(QWidget):
             fourcc = cv2.VideoWriter_fourcc(*'MJPG') # set codec  
             self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_height, self.img_width))
 
-    
+    @pyqtSlot()
+    def _start_recording(self):
+        # camera and trigger device connection check
+        if not self.ic.IC_IsDevValid(self.camera):
+            QMessageBox.about(self, 'Connection Error!', 'Connect camera')
+
+        # ready to start recording after camera devices are connected
+        else:
+            # check the No. of frames (or recording duration) to record
+            if (self.acq_frames.text()=='') or (self.frames <= 0):
+                QMessageBox.about(self, 'Setting Error!', 'Enter the more than 1 frames')
+                return
+            
+            # reset the progress
+            self.progress_bar.setValue(0)
+            self.progress_check.setText(f'Progress | {0:06d}/{self.frames:06d}')
+
+            # check parent directory to save recording
+            self.parent_idx = self.tree_view.get_parent_dir()
+
+            # if the parent dir is determined, refresh save path
+            self.current_path_label.setText(self.tree_view.model.filePath(self.parent_idx))
+
+            # if no input at experiment name, set default name as 'Exp'
+            if self.experiment_name_edit.text()=='':
+                save_dir_name = 'Exp'
+                self.experiment_name_edit.setText(save_dir_name)
+            else:
+                save_dir_name = self.experiment_name_edit.text()
+
+            # make dir to save images
+            self.tree_view.mk_exp_dir(self.parent_idx, save_dir_name)            
+
+            # if frame rate is larger than 15 Hz
+            # user have to select whether start recording with or without  monitoring
+            # if user want to monitor, the frame rate is set to 15 Hz 
+            if self.frame_rate > 15:
+                reply = QMessageBox.question(self, 'Notice!', 
+                                            'You can''t monitor the recording if the frame rate is larger than 15 Hz. \
+                                            Do you want to record without monitoring?',
+                                            QMessageBox.Yes | QMessageBox.No)
+                
+                # if yes, record movie without monitoring
+                if reply==QMessageBox.Yes:
+                    self.live.stop()
+                else:
+                    self.frame_rate = 15
+                    self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
+                    self.set_frame_rate.completer()
+            
+            # disable any button and input during trigger
+            self._set_enable_inputs(False)
+            
+            # start recording 
+            self.recording_type = 'NonTriggered'
+            self.start_recording = StartRecording(self)
+            self.start_recording.start()
+            self.start_recording.recording_termination.connect(self._stop_recording)
+            self.start_recording.save_img.connect(self._save_img)
+
+            # generate video
+            video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG') # set codec  
+            self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_height, self.img_width))
+
+
     @pyqtSlot(int, np.ndarray)
-    def _save_img(self, idx : int, img : np.ndarray):
+    def _save_img(self, idx: int, img: np.ndarray):
         '''
         idx: 
             index of image
@@ -495,7 +565,6 @@ class MainWidget(QWidget):
             self.progress_check.setText(f'Progress | {0:06d}/{self.frames:06d}')
 
 
-
     '''
     functions (slots) resppond to Thread
     '''
@@ -510,7 +579,7 @@ class MainWidget(QWidget):
         self.display_label.setPixmap(self.live_pixmap)
 
     @pyqtSlot(bool)
-    def _connection_state_view(self, refresh):
+    def _connection_state_view(self, refresh: bool):
         if refresh:
             # Check camera connection state
             if self.ic.IC_IsDevValid(self.camera):
@@ -526,10 +595,19 @@ class MainWidget(QWidget):
 
             try:
                 self.trig = InstantDiCtrl(self.dev_description)
-                self.trig_connection_state_label.setText('Connected')
-                self.trig_connection_led.setStyleSheet("QLabel {background-color : green; border-color : black; \
-                                                        border-style : default; border-width : 0px; \
-                                                        border-radius : 19px; min-height: 3px; min-width: 5px}")
+                
+                if self.trig.device.location!=b'':
+                    self.trig_connection_state_label.setText('Connected')
+                    self.trig_connection_led.setStyleSheet("QLabel {background-color : green; border-color : black; \
+                                                            border-style : default; border-width : 0px; \
+                                                            border-radius : 19px; min-height: 3px; min-width: 5px}")
+                else:
+                    self.trig = None
+                    self.trig_connection_state_label.setText('Disconnected')
+                    self.trig_connection_led.setStyleSheet("QLabel {background-color : red; border-color : black; \
+                                                            border-style : default; border-width : 0px; \
+                                                            border-radius : 19px; min-height: 3px; min-width: 5px}")
+
             except:
                 self.trig = None
                 self.trig_connection_state_label.setText('Disconnected')
