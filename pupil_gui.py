@@ -15,7 +15,6 @@ class pupil(QMainWindow):
         # define camera handle and functions
         self.ic = self.main_widget.ic
         self.camera = self.main_widget.camera
-
         self.initUI()
 
     def initUI(self):
@@ -50,6 +49,11 @@ class pupil(QMainWindow):
         selectDeviceAction = QAction('Select Device', self)
         selectDeviceAction.triggered.connect(self._selectdevice)
         self.fileMenu.addAction(selectDeviceAction)
+
+        # select models for dynamic pupil size measurments
+        selectDLCModelAction = QAction('Select DeepLapCut model', self)
+        selectDLCModelAction.triggered.connect(self._selectDLCModel)
+        self.fileMenu.addAction(selectDLCModelAction)
         
         # Exit menue
         exitAction = QAction('Exit', self)
@@ -64,6 +68,9 @@ class pupil(QMainWindow):
         if self.ic.IC_IsDevValid(self.main_widget.camera):
             self.ic.IC_StartLive(self.main_widget.camera, 0)
             self.ic.IC_SaveDeviceStateToFile(self.camera, b'device.xml')
+
+    def _selectDLCModel(self):
+        self.main_widget._DLCModel()
 
     def _exitaction(self):
         if self.ic.IC_IsDevValid(self.main_widget.camera):

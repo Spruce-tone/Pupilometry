@@ -11,6 +11,7 @@ class LiveDisplay(QThread):
     
     def __init__(self, parent):
         super().__init__(parent)
+        self.parent = parent
         self.camera = parent.camera
         self.ic = parent.ic
 
@@ -69,6 +70,7 @@ class RefreshDevState(QThread):
 
     def __init__(self, parent):
         super().__init__(parent)
+        self.parent = parent
         self.running = True
 
     def run(self):

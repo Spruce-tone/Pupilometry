@@ -3,15 +3,21 @@ from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QInputDialog, QSplitter, QTreeView, QWidget, QPushButton, \
                             QHBoxLayout, QVBoxLayout, \
                             QFrame, QGridLayout, QLabel, QGroupBox, \
-                            QLineEdit, QAbstractItemView, QMessageBox, QProgressBar
+                            QLineEdit, QAbstractItemView, QMessageBox, QProgressBar, QCheckBox
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, QIntValidator
+from cv2 import FlannBasedMatcher
 from lib import tisgrabber as tis
 import numpy as np
 from skimage import io
 from datetime import datetime
 import cv2
+from dlclive import DLCLive, Processor
+
 sys.path.append('./lib')
+if (sys.version_info.minor <= 7) and (sys.version_info.major==3): # add .dll search path for python 3.7 and older
+    os.environ['PATH'] = os.path.abspath('./lib') + os.pathsep + os.environ['PATH']
+
 from lib.SignalConnection import LiveDisplay, RefreshDevState, TriggeredRecording, StartRecording
 from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
@@ -24,6 +30,9 @@ class MainWidget(QWidget):
 
         # initialize and connect trigger device
         self._init_trigger()
+
+        # initialize dynamic plot state   
+        self._init_dynamic_plot_state()
 
         # Define main layout
         self.main_layout = QHBoxLayout()
@@ -86,6 +95,30 @@ class MainWidget(QWidget):
         except:
             self.trig = None
 
+    def _init_dynamic_plot_state(self):
+        self.dynamic_plot = False
+        self.fit_threshold = 0.9
+
+    def _DLCModel(self):
+        reply = QMessageBox.question(self, 'Live pupil size tracking', 
+                                            'Do you want to dynamically plot the pupil size?',
+                                            QMessageBox.Yes | QMessageBox.No)
+                
+        # if yes, record movie without monitoring
+        if reply==QMessageBox.Yes:
+            QMessageBox.about(self, 'Select DeepLabCut model', \
+                            f'Select DeepLabCut model path where include "pose_cfg.yaml" file')
+            try:
+                dlc_proc = Processor()
+                self.dlc_model_path = QFileDialog.getExistingDirectory(self)
+                self.dlclive = DLCLive(self.dlc_model_path, processor=dlc_proc)
+                self.dynamic_plot = True
+                self._dynamicplot_set(self.dynamic_plot)
+            except:
+                QMessageBox.about(self, 'Failed to select DeepLabCut model', \
+                            f'Please check the model path and "pose_cfg.yaml" file')
+
+
     # movie widget
     def _add_movie_widget(self):
         '''
@@ -100,9 +133,51 @@ class MainWidget(QWidget):
         # generate thread and connect to display widget
         self.live = LiveDisplay(self)
         self.live.start()
-        self.live.Pixmap_display.connect(self.display_image)  
-        self.movie_layout.addWidget(self.display_label)
+        self.live.Pixmap_display.connect(self.display_image)
+
+        # checkbox to show the fitted circle on pupil
+        self.movie_frame.setFont(QFont('Arial', 12))
+        self.show_circle = QCheckBox('Show circle')
+        self.set_thesh_label = QLabel(f'Set Threshold : {self.fit_threshold:.6f}')
+        self.set_fit_threshold = QLineEdit()
+
+        self.set_fit_threshold.setValidator(QDoubleValidator()) # set frame rate format : double
+        self.set_fit_threshold.editingFinished.connect(self._set_fit_threshold)
+        # set default frame rate
+        if self.set_fit_threshold.text()=='':
+            self.set_fit_threshold.setText(f'{self.fit_threshold:.6f}')
+            self.set_fit_threshold.completer()
+        self._dynamicplot_set(False) # deactivate setting for dynamic plot
+        
+        # add widget
+        self.movie_layout.addWidget(self.show_circle, 1, 1, 1, 1)
+        self.movie_layout.addWidget(self.set_thesh_label, 1, 5, 1, 4)
+        self.movie_layout.addWidget(self.set_fit_threshold, 1, 9, 1, 2)
+        self.movie_layout.addWidget(self.display_label, 2, 1, -1, 10)
     
+    @pyqtSlot()
+    def _set_fit_threshold(self):
+        # get frame rate from line edit input
+        circle_threshold = float(self.set_fit_threshold.text())
+        
+        # restrict the frame rate betweent 0.000001 and 29.97 Hz
+        if circle_threshold < 0:
+            circle_threshold = 0
+        elif circle_threshold > 1:
+            circle_threshold = 1
+
+        # set frame rate and terminate
+        self.fit_threshold = circle_threshold
+        self.set_fit_threshold.setText(f'{self.fit_threshold:.6f}')
+        self.set_fit_threshold.completer()
+        self.set_thesh_label.setText(f'Set Threshold : {self.fit_threshold:.6f}')
+
+    def _dynamicplot_set(self, dynamic_plot_state: bool):
+        self.show_circle.setEnabled(dynamic_plot_state)
+        self.set_thesh_label.setEnabled(dynamic_plot_state)
+        self.set_fit_threshold.setEnabled(dynamic_plot_state)
+
+
     # device connection state
     def _dev_connection_state_widget(self):
         '''
@@ -705,7 +780,7 @@ class FileTreeView(QTreeView):
 
     @pyqtSlot()
     def _file_browser(self):
-        self.current_dir =  QFileDialog.getExistingDirectory(self)
+        self.current_dir = QFileDialog.getExistingDirectory(self)
         self.setRootIndex(self.model.index(self.current_dir))
 
     @pyqtSlot()
