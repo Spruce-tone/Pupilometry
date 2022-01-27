@@ -2,9 +2,8 @@ from PyQt5.QtCore import pyqtSignal, QThread
 from PyQt5.QtGui import QImage
 from lib import tisgrabber as tis
 import numpy as np
-import ctypes
-import time
-
+import ctypes, time
+from lib.utils import find_circle, make_circle
 
 class LiveDisplay(QThread):
     Pixmap_display = pyqtSignal(QImage)
@@ -51,6 +50,14 @@ class LiveDisplay(QThread):
 
                 # correct channel order                                
                 img[:, :, :] = img[:, :, ::-1]
+
+                # if self.parent.show_circle.isChecked():
+                #     dlc_output = self.parent.dlclive.get_pose(img)
+                #     center, radius, probability = find_circle(dlc_output)
+                #     if probability >= self.parent.fit_threshold:
+                #         circle_points = make_circle(center, radius)
+
+
                 qimage = QImage(img.data, img.shape[1], img.shape[0], img.strides[0],  QImage.Format_RGB888)
                 self.Pixmap_display.emit(qimage)
       

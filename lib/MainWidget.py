@@ -3,10 +3,12 @@ from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QInputDialog, QSplitter, QTreeView, QWidget, QPushButton, \
                             QHBoxLayout, QVBoxLayout, \
                             QFrame, QGridLayout, QLabel, QGroupBox, \
-                            QLineEdit, QAbstractItemView, QMessageBox, QProgressBar, QCheckBox
+                            QLineEdit, QAbstractItemView, QMessageBox, \
+                            QProgressBar, QCheckBox
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, QIntValidator
-from cv2 import FlannBasedMatcher
+from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, \
+                        QIntValidator, QPainter, QPen
+# from cv2 import FlannBasedMatcher
 from lib import tisgrabber as tis
 import numpy as np
 from skimage import io
@@ -110,8 +112,9 @@ class MainWidget(QWidget):
                             f'Select DeepLabCut model path where include "pose_cfg.yaml" file')
             try:
                 dlc_proc = Processor()
-                self.dlc_model_path = QFileDialog.getExistingDirectory(self)
+                self.dlc_model_path = QFileDialog.getExistingDirectory()
                 self.dlclive = DLCLive(self.dlc_model_path, processor=dlc_proc)
+                self.dlclive.init_inference()
                 self.dynamic_plot = True
                 self._dynamicplot_set(self.dynamic_plot)
             except:
@@ -158,16 +161,16 @@ class MainWidget(QWidget):
     @pyqtSlot()
     def _set_fit_threshold(self):
         # get frame rate from line edit input
-        circle_threshold = float(self.set_fit_threshold.text())
+        fit_threshold = float(self.set_fit_threshold.text())
         
-        # restrict the frame rate betweent 0.000001 and 29.97 Hz
-        if circle_threshold < 0:
-            circle_threshold = 0
-        elif circle_threshold > 1:
-            circle_threshold = 1
+        # restrict pupil fitting threshold betweent 0 and 1
+        if fit_threshold < 0:
+            fit_threshold = 0
+        elif fit_threshold > 1:
+            fit_threshold = 1
 
         # set frame rate and terminate
-        self.fit_threshold = circle_threshold
+        self.fit_threshold = fit_threshold
         self.set_fit_threshold.setText(f'{self.fit_threshold:.6f}')
         self.set_fit_threshold.completer()
         self.set_thesh_label.setText(f'Set Threshold : {self.fit_threshold:.6f}')
@@ -462,6 +465,7 @@ class MainWidget(QWidget):
         elif self.recording_type=='NonTriggered':
             self.start_recording.stop()
         self._set_enable_inputs(True)
+        self._dynamicplot_set(self.dynamic_plot)
         self.video.release()
 
     @pyqtSlot()
@@ -526,8 +530,9 @@ class MainWidget(QWidget):
                     self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
                     self.set_frame_rate.completer()
             
-            # disable any button and input during trigger
+            # disable any button and input during trigger and dynamic plot setting
             self._set_enable_inputs(False)
+            self._dynamicplot_set(False)
             
             # ready TTL trigger
             # if the device receive TTL signal, start recording 
@@ -592,8 +597,9 @@ class MainWidget(QWidget):
                     self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
                     self.set_frame_rate.completer()
             
-            # disable any button and input during trigger
+            # disable any button and input during trigger and dynamics plot setting
             self._set_enable_inputs(False)
+            self._dynamicplot_set(False)
             
             # start recording 
             self.recording_type = 'NonTriggered'
@@ -652,6 +658,27 @@ class MainWidget(QWidget):
         self.live_pixmap = QPixmap.fromImage(qimage)
         self.live_pixmap.scaled(720, 480, Qt.KeepAspectRatioByExpanding)
         self.display_label.setPixmap(self.live_pixmap)
+        
+        
+        # qp = QPainter(self.live_pixmap)
+        qp = QPainter(self.display_label.pixmap())
+        # qp.begin(self)
+        qp.setPen(QPen(Qt.red, 3))
+        qp.drawEllipse(700, 470, 10, 30)
+        # qp.drawEllipse(0, 50, 0, 50)
+        # qp.drawEllipse(self.live_pixmap.rect().adjusted(4, 4, -4, -4))
+        qp.end()
+        # self.test_label = QLabel{
+        #             border-radius: 10px;
+        #             min-height: 20px;
+        #             min-width: 20px;
+        #             }
+        # self.test_label.move(360, 240)
+        # self.test_label.resize(50, 50)
+        # self.test_label.setStyleSheet("border: 3px solid blue; \
+        #                             border-radius: 40px;")
+  
+        # self.movie_layout.addWidget(qp, 2, 1, -1, 10)
 
     @pyqtSlot(bool)
     def _connection_state_view(self, refresh: bool):
@@ -781,7 +808,8 @@ class FileTreeView(QTreeView):
     @pyqtSlot()
     def _file_browser(self):
         self.current_dir = QFileDialog.getExistingDirectory(self)
-        self.setRootIndex(self.model.index(self.current_dir))
+        if self.current_dir != '':
+            self.setRootIndex(self.model.index(self.current_dir))
 
     @pyqtSlot()
     def _mk_new_dir(self):
