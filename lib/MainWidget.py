@@ -15,6 +15,7 @@ from skimage import io
 from datetime import datetime
 import cv2
 from dlclive import DLCLive, Processor
+from typing import Dict
 
 sys.path.append('./lib')
 if (sys.version_info.minor <= 7) and (sys.version_info.major==3): # add .dll search path for python 3.7 and older
@@ -77,8 +78,8 @@ class MainWidget(QWidget):
         self.min_fps = float(0.000001)
         self.frame_rate = 2
         self.frames = 550
-        self.img_height = 720
-        self.img_width = 480
+        self.img_width = 720
+        self.img_height = 480
         self.img_channels = 3
         # size of single frame image in GB
         # 24 bit, 480 x 720 pixels RGB image
@@ -143,6 +144,7 @@ class MainWidget(QWidget):
         self.show_circle = QCheckBox('Show circle')
         self.set_thesh_label = QLabel(f'Set Threshold : {self.fit_threshold:.6f}')
         self.set_fit_threshold = QLineEdit()
+        self.live_frame_rate = QLabel(f'Frame rate : {0:2.2f}')
 
         self.set_fit_threshold.setValidator(QDoubleValidator()) # set frame rate format : double
         self.set_fit_threshold.editingFinished.connect(self._set_fit_threshold)
@@ -156,7 +158,8 @@ class MainWidget(QWidget):
         self.movie_layout.addWidget(self.show_circle, 1, 1, 1, 1)
         self.movie_layout.addWidget(self.set_thesh_label, 1, 5, 1, 4)
         self.movie_layout.addWidget(self.set_fit_threshold, 1, 9, 1, 2)
-        self.movie_layout.addWidget(self.display_label, 2, 1, -1, 10)
+        self.movie_layout.addWidget(self.display_label, 2, 1, 10, -1)
+        self.movie_layout.addWidget(self.live_frame_rate, 12, 10, -1, 1)
     
     @pyqtSlot()
     def _set_fit_threshold(self):
@@ -545,7 +548,7 @@ class MainWidget(QWidget):
             # generate video
             video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
             fourcc = cv2.VideoWriter_fourcc(*'MJPG') # set codec  
-            self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_height, self.img_width))
+            self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_width, self.img_height))
 
     @pyqtSlot()
     def _start_recording(self):
@@ -611,7 +614,7 @@ class MainWidget(QWidget):
             # generate video
             video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
             fourcc = cv2.VideoWriter_fourcc(*'MJPG') # set codec  
-            self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_height, self.img_width))
+            self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_width, self.img_height))
 
 
     @pyqtSlot(int, np.ndarray)
@@ -649,36 +652,26 @@ class MainWidget(QWidget):
     '''
     functions (slots) resppond to Thread
     '''
-    @pyqtSlot(QImage)
-    def display_image(self, qimage):
+    @pyqtSlot(dict)
+    def display_image(self, live_signal: Dict):
         '''
         QImage:
             recorded image for live display
         '''
-        self.live_pixmap = QPixmap.fromImage(qimage)
-        self.live_pixmap.scaled(720, 480, Qt.KeepAspectRatioByExpanding)
+        self.live_pixmap = QPixmap.fromImage(live_signal.get('image'))
+        self.live_pixmap.scaled(self.img_width, self.img_height, Qt.KeepAspectRatioByExpanding)
         self.display_label.setPixmap(self.live_pixmap)
         
+        center = live_signal.get('center') 
+        radius = live_signal.get('radius')
         
-        # qp = QPainter(self.live_pixmap)
-        qp = QPainter(self.display_label.pixmap())
-        # qp.begin(self)
-        qp.setPen(QPen(Qt.red, 3))
-        qp.drawEllipse(700, 470, 10, 30)
-        # qp.drawEllipse(0, 50, 0, 50)
-        # qp.drawEllipse(self.live_pixmap.rect().adjusted(4, 4, -4, -4))
-        qp.end()
-        # self.test_label = QLabel{
-        #             border-radius: 10px;
-        #             min-height: 20px;
-        #             min-width: 20px;
-        #             }
-        # self.test_label.move(360, 240)
-        # self.test_label.resize(50, 50)
-        # self.test_label.setStyleSheet("border: 3px solid blue; \
-        #                             border-radius: 40px;")
-  
-        # self.movie_layout.addWidget(qp, 2, 1, -1, 10)
+        if self.show_circle.isChecked() and (center is not None) and (radius is not None):
+            painter = QPainter(self.display_label.pixmap())
+            painter.setPen(QPen(Qt.red, 1))
+            painter.drawEllipse(center[0] - radius, center[1] - radius, radius*2, radius*2)
+
+        display_live_fps = live_signal.get('frame_rate')
+        self.live_frame_rate.setText(f'Frame rate : {display_live_fps:2.2f}')
 
     @pyqtSlot(bool)
     def _connection_state_view(self, refresh: bool):

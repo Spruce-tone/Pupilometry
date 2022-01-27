@@ -4,10 +4,11 @@ from lib import tisgrabber as tis
 import numpy as np
 import ctypes, time
 from lib.utils import find_circle, make_circle
+from typing import Dict
 
 class LiveDisplay(QThread):
-    Pixmap_display = pyqtSignal(QImage)
-    
+    Pixmap_display = pyqtSignal(dict) # captured image
+
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -21,6 +22,10 @@ class LiveDisplay(QThread):
         
         self.running = True
 
+        # moving avg filter for frame rate
+        # initial avg value is 30 Hz, sampling = 25
+        self.live_fps = np.ones(25)*30
+
     def run(self):
         # start camera for live
         self.ic.IC_StartLive(self.camera, 0)
@@ -33,8 +38,10 @@ class LiveDisplay(QThread):
         self.buffer_size = self.Width.value * self.Height.value * self.BitsPerPixel.value
         
         while self.running:
+            # measure frame rate
+            loop_start = time.time()
             if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
-               
+                
 
                 # Get the image data
                 imagePtr =  self.ic.IC_GetImagePtr(self.camera)
@@ -48,19 +55,36 @@ class LiveDisplay(QThread):
                                 self.bpp))
 
 
+                # signal container
+                live_signal = {}
+
                 # correct channel order                                
                 img[:, :, :] = img[:, :, ::-1]
-
-                # if self.parent.show_circle.isChecked():
-                #     dlc_output = self.parent.dlclive.get_pose(img)
-                #     center, radius, probability = find_circle(dlc_output)
-                #     if probability >= self.parent.fit_threshold:
-                #         circle_points = make_circle(center, radius)
-
+                
+                if self.parent.show_circle.isChecked():
+                    dlc_output = self.parent.dlclive.get_pose(img)
+                    center, radius, probability = find_circle(dlc_output)
+                    if probability >= self.parent.fit_threshold:
+                        live_signal['center'] = center
+                        live_signal['radius'] = radius
 
                 qimage = QImage(img.data, img.shape[1], img.shape[0], img.strides[0],  QImage.Format_RGB888)
-                self.Pixmap_display.emit(qimage)
-      
+                live_signal['image'] = qimage
+                
+
+                loop_end = time.time()
+                duration = loop_end - loop_start
+                fps = 0 if duration <= 0 else 1/duration
+                self.live_fps[0:-1] = self.live_fps[1:]
+                self.live_fps[-1] = fps
+
+                live_signal['frame_rate'] = self.live_fps.mean()
+                self.Pixmap_display.emit(live_signal)
+
+                # # calculate frame rate
+                # print(f'finish_imaging : {loop_end - loop_start:.5f} sec')
+                # print(f'frame rates : {1 / (loop_end - loop_start):.5f} fps')
+
     def resume(self):
         self.running = True
     
