@@ -15,8 +15,10 @@ from skimage import io
 from datetime import datetime
 import cv2
 from dlclive import DLCLive, Processor
-from typing import Dict
+from typing import Dict, List
 import deeplabcut
+
+from lib.utils import find_circle
 
 sys.path.append('./lib')
 if (sys.version_info.minor <= 7) and (sys.version_info.major==3): # add .dll search path for python 3.7 and older
@@ -88,7 +90,8 @@ class MainWidget(QWidget):
         # size of single frame image in GB
         # 24 bit, 480 x 720 pixels RGB image
         self.img_size_GB = self.img_width * self.img_height * 24 / 8 / 2**30
-        self.recording_type = 'LiveDisplay' 
+        self.recording_type = 'LiveDisplay'
+        self.img_formats = ('.tif', '.jpg', '.png', '.jpeg') 
     
     def _init_trigger(self):
         '''
@@ -131,11 +134,40 @@ class MainWidget(QWidget):
         deeplabcut.launch_dlc()
 
     def _extract_pupil_size(self):
+        '''
+        Extract pupil size from saved images
+        '''
         # if not self.dynamic_plot:
         #     self._dlc_model()
         # QMessageBox.about(self, 'Select directories ', \
         #                     f'Select directories include pupil images')
 
+        dir_paths = self._get_dir_paths()
+        self._define_data_parser()
+
+        for path in dir_paths:
+            img_names = [names for names in os.listdir(path) if names.endswith(self.img_formats)]
+            img_names = sorted(img_names, key=lambda x: int(x[:6]))
+
+            pupil_data = {}
+
+            for idx, img_name in enumerate(img_names):
+                img = io.imread(os.path.join(path, img_name)) 
+                dlc_output = self.dlclive.get_pose(img)
+                center, radius, probability, num_points = find_circle(dlc_output)
+                xc, yc = center
+                index = int(img_name[:6])
+                time_stamp = img_name
+                values = []
+
+    def _get_dir_paths(self) -> List[str]:
+        '''
+        ----------
+        Return
+        -----------
+        dir_paths : list
+            path of directories that contain saved pupil images 
+        '''
         dialog = QFileDialog(self)
         dialog.setWindowTitle('Choose Directories')
         dialog.setOption(QFileDialog.DontUseNativeDialog, True)
@@ -144,10 +176,22 @@ class MainWidget(QWidget):
             if isinstance(view.model(), QFileSystemModel):
                 view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         if dialog.exec_() == QDialog.Accepted:
-            print(dialog.selectedFiles())
-            # self.listWidget.clear()
-            # self.listWidget.addItems(dialog.selectedFiles())
-        # dialog.deleteLater()
+            dir_paths = dialog.selectedFiles()
+
+        return dir_paths
+
+    def _define_data_parser(self):
+        self.data_keys = ['index', 'time_stamp', 'time_sec', \
+                        'year', 'month', 'day', 'hour', 'min', 'sec', \
+                        'num_points', 'xc', 'yc', 'radius', 'probability']
+        self.parser = re.compile('(?P<index>\d{6})\
+                                _(?P<time_stamp>(?P<year>\d{4})\
+                                -(?P<month>\d{2})\
+                                -(?P<day>\d{2})\
+                                _(?P<hour>\d{2})hr\
+                                -(?P<min>\d{2})min\
+                                -(?P<sec>\d{2}.\d{6}sec).tif',
+                                re.VERBOSE)
 
     # movie widget
     def _add_movie_widget(self):
@@ -662,7 +706,7 @@ class MainWidget(QWidget):
         # set save path and image name
         save_dir = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}'
         current_time = datetime.now()
-        current_time = current_time.strftime('%Y-%m-%d_%Hhr-%Mmin-%S.%fsec')[:-6]
+        current_time = current_time.strftime('%Y-%m-%d_%Hhr-%Mmin-%S.%fsec')
         
         img_name = f'{idx:06d}_{current_time}.tif'
 

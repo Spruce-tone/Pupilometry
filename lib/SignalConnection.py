@@ -120,7 +120,7 @@ class GetCamImage(QThread):
             radius of circle  
         '''
         dlc_output = self.parent.dlclive.get_pose(img)
-        center, radius, probability = find_circle(dlc_output)
+        center, radius, probability, _ = find_circle(dlc_output)
         
         if probability >= self.parent.fit_threshold:
             return center, radius

@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Tuple
 
-def find_circle(dlc_output: np.ndarray) -> Tuple[np.ndarray, np.float, np.float]:
+def find_circle(dlc_output: np.ndarray) -> Tuple[np.ndarray, float, float, int]:
     '''
     ----------
     Input Args
@@ -15,10 +15,12 @@ def find_circle(dlc_output: np.ndarray) -> Tuple[np.ndarray, np.float, np.float]
     -----------
     center : np.ndarray
         x, y coordinates for center of circle
-    radius : np.float
+    radius : float
         radius of circle  
-    probability : np.float
+    probability : float
         averaged key point recognition probability
+    num_points : int
+        the number of key points 
     '''
     assert type(dlc_output)==np.ndarray, f'Input must be numpy array'
 
@@ -42,7 +44,7 @@ def find_circle(dlc_output: np.ndarray) -> Tuple[np.ndarray, np.float, np.float]
     center = np.array([xc, yc])
     radius = np.sqrt(c[0] + xc**2 + yc**2)
 
-    return center, radius, probability
+    return center, radius, probability, num_points
 
 def make_circle(center: np.ndarray, radius, num_sample: int=256) -> np.ndarray:
     '''
