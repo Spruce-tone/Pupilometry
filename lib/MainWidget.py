@@ -49,6 +49,9 @@ class MainWidget(QWidget):
 
         # movie display
         self._add_movie_widget()
+
+        # live graph display
+        self._add_graph_widget()
         
         '''
         control panel division
@@ -161,6 +164,14 @@ class MainWidget(QWidget):
         self.movie_layout.addWidget(self.display_label, 2, 1, 10, -1)
         self.movie_layout.addWidget(self.live_frame_rate, 12, 10, -1, 1)
     
+    # graph widget
+    def _add_graph_widget(self):
+        '''
+        generate graph widget
+        if start the dynamic pupil size measurements, plot the graph  
+        '''
+        # generate display widget
+
     @pyqtSlot()
     def _set_fit_threshold(self):
         # get frame rate from line edit input
@@ -417,9 +428,10 @@ class MainWidget(QWidget):
     def _resume_live_imaging(self):
         if not self.ic.IC_IsDevValid(self.camera):
             self._init_camera()
-        self.live = LiveDisplay(self)
-        self.live.Pixmap_display.connect(self.display_image)  
+            self.live = LiveDisplay(self)
+            self.live.Pixmap_display.connect(self.display_image)  
         self.live.start()
+        self.live.resume()
 
     @pyqtSlot()
     def _stop_live_imaging(self):
@@ -677,7 +689,8 @@ class MainWidget(QWidget):
     def _connection_state_view(self, refresh: bool):
         if refresh:
             # Check camera connection state
-            if self.ic.IC_IsDevValid(self.camera):
+            camera = self.ic.IC_LoadDeviceStateFromFile(None, b'device.xml')
+            if self.ic.IC_IsDevValid(camera):
                 self.camera_connection_state_label.setText('Connected')
                 self.camera_connection_led.setStyleSheet("QLabel {background-color : green; border-color : black; \
                                                             border-style : default; border-width : 0px; \
