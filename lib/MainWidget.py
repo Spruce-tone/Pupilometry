@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QHBoxLayout, QVBoxLayout, \
                             QFrame, QGridLayout, QLabel, QGroupBox, \
                             QLineEdit, QAbstractItemView, QMessageBox, \
-                            QProgressBar, QCheckBox
+                            QProgressBar, QCheckBox, QListView, QDialog
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, \
                         QIntValidator, QPainter, QPen
@@ -16,12 +16,13 @@ from datetime import datetime
 import cv2
 from dlclive import DLCLive, Processor
 from typing import Dict
+import deeplabcut
 
 sys.path.append('./lib')
 if (sys.version_info.minor <= 7) and (sys.version_info.major==3): # add .dll search path for python 3.7 and older
     os.environ['PATH'] = os.path.abspath('./lib') + os.pathsep + os.environ['PATH']
 
-from lib.SignalConnection import LiveDisplay, RefreshDevState, TriggeredRecording, StartRecording
+from lib.SignalConnection import GetCamImage, RefreshDevState
 from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
 class MainWidget(QWidget):
@@ -86,7 +87,8 @@ class MainWidget(QWidget):
         self.img_channels = 3
         # size of single frame image in GB
         # 24 bit, 480 x 720 pixels RGB image
-        self.img_size_GB = self.img_width * self.img_height * 24 / 8 / 2**30 
+        self.img_size_GB = self.img_width * self.img_height * 24 / 8 / 2**30
+        self.recording_type = 'LiveDisplay' 
     
     def _init_trigger(self):
         '''
@@ -105,9 +107,9 @@ class MainWidget(QWidget):
         self.dynamic_plot = False
         self.fit_threshold = 0.9
 
-    def _DLCModel(self):
-        reply = QMessageBox.question(self, 'Live pupil size tracking', 
-                                            'Do you want to dynamically plot the pupil size?',
+    def _dlc_model(self):
+        reply = QMessageBox.question(self, 'Load DeepLabCut model', 
+                                            'Do you want to load models to extract pupil size?',
                                             QMessageBox.Yes | QMessageBox.No)
                 
         # if yes, record movie without monitoring
@@ -125,6 +127,27 @@ class MainWidget(QWidget):
                 QMessageBox.about(self, 'Failed to select DeepLabCut model', \
                             f'Please check the model path and "pose_cfg.yaml" file')
 
+    def _launch_deeplabcut(self):
+        deeplabcut.launch_dlc()
+
+    def _extract_pupil_size(self):
+        # if not self.dynamic_plot:
+        #     self._dlc_model()
+        # QMessageBox.about(self, 'Select directories ', \
+        #                     f'Select directories include pupil images')
+
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle('Choose Directories')
+        dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        dialog.setFileMode(QFileDialog.DirectoryOnly)
+        for view in dialog.findChildren((QListView, QTreeView)):
+            if isinstance(view.model(), QFileSystemModel):
+                view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        if dialog.exec_() == QDialog.Accepted:
+            print(dialog.selectedFiles())
+            # self.listWidget.clear()
+            # self.listWidget.addItems(dialog.selectedFiles())
+        # dialog.deleteLater()
 
     # movie widget
     def _add_movie_widget(self):
@@ -138,9 +161,9 @@ class MainWidget(QWidget):
         self.display_label.resize(720, 1080)
 
         # generate thread and connect to display widget
-        self.live = LiveDisplay(self)
-        self.live.start()
-        self.live.Pixmap_display.connect(self.display_image)
+        self.get_img = GetCamImage(self)
+        self.get_img.start()
+        self.get_img.Pixmap_display.connect(self.display_image)
 
         # checkbox to show the fitted circle on pupil
         self.movie_frame.setFont(QFont('Arial', 12))
@@ -172,22 +195,6 @@ class MainWidget(QWidget):
         '''
         # generate display widget
 
-    @pyqtSlot()
-    def _set_fit_threshold(self):
-        # get frame rate from line edit input
-        fit_threshold = float(self.set_fit_threshold.text())
-        
-        # restrict pupil fitting threshold betweent 0 and 1
-        if fit_threshold < 0:
-            fit_threshold = 0
-        elif fit_threshold > 1:
-            fit_threshold = 1
-
-        # set frame rate and terminate
-        self.fit_threshold = fit_threshold
-        self.set_fit_threshold.setText(f'{self.fit_threshold:.6f}')
-        self.set_fit_threshold.completer()
-        self.set_thesh_label.setText(f'Set Threshold : {self.fit_threshold:.6f}')
 
     def _dynamicplot_set(self, dynamic_plot_state: bool):
         self.show_circle.setEnabled(dynamic_plot_state)
@@ -428,14 +435,14 @@ class MainWidget(QWidget):
     def _resume_live_imaging(self):
         if not self.ic.IC_IsDevValid(self.camera):
             self._init_camera()
-            self.live = LiveDisplay(self)
-            self.live.Pixmap_display.connect(self.display_image)  
-        self.live.start()
-        self.live.resume()
+            self.get_img = GetCamImage(self)
+            self.get_img.Pixmap_display.connect(self.display_image)  
+        self.get_img.start()
+        self.get_img.resume()
 
     @pyqtSlot()
     def _stop_live_imaging(self):
-        self.live.pause()
+        self.get_img.pause()
 
     @pyqtSlot()
     def _set_imaging_frames(self):
@@ -474,11 +481,26 @@ class MainWidget(QWidget):
         self.set_frame_rate.completer()
 
     @pyqtSlot()
+    def _set_fit_threshold(self):
+        # get frame rate from line edit input
+        fit_threshold = float(self.set_fit_threshold.text())
+        
+        # restrict pupil fitting threshold betweent 0 and 1
+        if fit_threshold < 0:
+            fit_threshold = 0
+        elif fit_threshold > 1:
+            fit_threshold = 1
+
+        # set frame rate and terminate
+        self.fit_threshold = fit_threshold
+        self.set_fit_threshold.setText(f'{self.fit_threshold:.6f}')
+        self.set_fit_threshold.completer()
+        self.set_thesh_label.setText(f'Set Threshold : {self.fit_threshold:.6f}')
+
+    @pyqtSlot()
     def _stop_recording(self):
-        if self.recording_type=='Triggered':
-            self.triggered_recording.stop()
-        elif self.recording_type=='NonTriggered':
-            self.start_recording.stop()
+        self.get_img.stop()
+        self.recording_type='LiveDisplay'
         self._set_enable_inputs(True)
         self._dynamicplot_set(self.dynamic_plot)
         self.video.release()
@@ -539,7 +561,7 @@ class MainWidget(QWidget):
                 
                 # if yes, record movie without monitoring
                 if reply==QMessageBox.Yes:
-                    self.live.stop()
+                    self.get_img.stop()
                 else:
                     self.frame_rate = 15
                     self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
@@ -552,10 +574,10 @@ class MainWidget(QWidget):
             # ready TTL trigger
             # if the device receive TTL signal, start recording 
             self.recording_type = 'Triggered'
-            self.triggered_recording = TriggeredRecording(self)
-            self.triggered_recording.start()
-            self.triggered_recording.recording_termination.connect(self._stop_recording)
-            self.triggered_recording.save_img.connect(self._save_img)
+            self.get_img.set_recording_mode()
+            self.get_img.recording_termination.connect(self._stop_recording)
+            self.get_img.save_img.connect(self._save_img)
+            self.get_img.Pixmap_display.connect(self.display_image)
 
             # generate video
             video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
@@ -606,7 +628,7 @@ class MainWidget(QWidget):
                 
                 # if yes, record movie without monitoring
                 if reply==QMessageBox.Yes:
-                    self.live.stop()
+                    self.get_img.stop()
                 else:
                     self.frame_rate = 15
                     self.set_frame_rate.setText(f'{self.frame_rate:.6f}')
@@ -617,11 +639,11 @@ class MainWidget(QWidget):
             self._dynamicplot_set(False)
             
             # start recording 
-            self.recording_type = 'NonTriggered'
-            self.start_recording = StartRecording(self)
-            self.start_recording.start()
-            self.start_recording.recording_termination.connect(self._stop_recording)
-            self.start_recording.save_img.connect(self._save_img)
+            self.recording_type = 'Manual'
+            self.get_img.set_recording_mode()
+            self.get_img.recording_termination.connect(self._stop_recording)
+            self.get_img.save_img.connect(self._save_img)
+            self.get_img.Pixmap_display.connect(self.display_image)
 
             # generate video
             video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
@@ -640,7 +662,8 @@ class MainWidget(QWidget):
         # set save path and image name
         save_dir = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}'
         current_time = datetime.now()
-        current_time = current_time.strftime('%Y-%m-%d_%Hhr-%Mmin-%Ssec')
+        current_time = current_time.strftime('%Y-%m-%d_%Hhr-%Mmin-%S.%fsec')[:-6]
+        
         img_name = f'{idx:06d}_{current_time}.tif'
 
         # update recording progress
@@ -651,7 +674,6 @@ class MainWidget(QWidget):
         file_name = os.path.join(save_dir, img_name)
         io.imsave(file_name, img)
 
-        
         # wirte video
         self.video.write(img)
         if idx==(self.frames - 1):
@@ -670,20 +692,18 @@ class MainWidget(QWidget):
         QImage:
             recorded image for live display
         '''
-        self.live_pixmap = QPixmap.fromImage(live_signal.get('image'))
+        center, radius, img, fps = (live_signal.get(key) for key in ['center', 'radius', 'image', 'frame_rate']) 
+
+        self.live_pixmap = QPixmap.fromImage(img)
         self.live_pixmap.scaled(self.img_width, self.img_height, Qt.KeepAspectRatioByExpanding)
         self.display_label.setPixmap(self.live_pixmap)
-        
-        center = live_signal.get('center') 
-        radius = live_signal.get('radius')
         
         if self.show_circle.isChecked() and (center is not None) and (radius is not None):
             painter = QPainter(self.display_label.pixmap())
             painter.setPen(QPen(Qt.red, 1))
             painter.drawEllipse(center[0] - radius, center[1] - radius, radius*2, radius*2)
 
-        display_live_fps = live_signal.get('frame_rate')
-        self.live_frame_rate.setText(f'Frame rate : {display_live_fps:2.2f}')
+        self.live_frame_rate.setText(f'Frame rate : {fps:2.2f}')
 
     @pyqtSlot(bool)
     def _connection_state_view(self, refresh: bool):

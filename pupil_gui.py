@@ -1,5 +1,6 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, qApp, QDesktopWidget
+from PyQt5.QtCore import pyqtSlot
 from lib.MainWidget import MainWidget
 
 class pupil(QMainWindow):    
@@ -44,16 +45,27 @@ class pupil(QMainWindow):
 
         # File menu
         self.fileMenu = self.mainMenu.addMenu('&File')
+        self.dlcMenu = self.fileMenu.addMenu('&DeepLabCut')
 
         # select device menu
         selectDeviceAction = QAction('Select Device', self)
         selectDeviceAction.triggered.connect(self._selectdevice)
         self.fileMenu.addAction(selectDeviceAction)
 
+        # Open deeplabcut for training
+        launchDeepLabCut = QAction('Launch', self)
+        launchDeepLabCut.triggered.connect(self._launchDeepLabcCt)
+        self.dlcMenu.addAction(launchDeepLabCut)
+
         # select models for dynamic pupil size measurments
         selectDLCModelAction = QAction('Select DeepLapCut model', self)
         selectDLCModelAction.triggered.connect(self._selectDLCModel)
-        self.fileMenu.addAction(selectDLCModelAction)
+        self.dlcMenu.addAction(selectDLCModelAction)
+
+        # extract pupil size from image sequences
+        extractPupilsizeAction = QAction('Extract Pupil size', self)
+        extractPupilsizeAction.triggered.connect(self._extractPupilSize)
+        self.dlcMenu.addAction(extractPupilsizeAction)
         
         # Exit menue
         exitAction = QAction('Exit', self)
@@ -61,17 +73,27 @@ class pupil(QMainWindow):
         exitAction.triggered.connect(self._exitaction)
         self.fileMenu.addAction(exitAction)
 
+    @pyqtSlot()
     def _selectdevice(self):
         self.ic.IC_StopLive(self.main_widget.camera)
         self.ic.IC_ShowDeviceSelectionDialog(None)
- 
+
         if self.ic.IC_IsDevValid(self.main_widget.camera):
             self.ic.IC_StartLive(self.main_widget.camera, 0)
             self.ic.IC_SaveDeviceStateToFile(self.camera, b'device.xml')
+    
+    @pyqtSlot()
+    def _launchDeepLabcCt(self):
+        self.main_widget._launch_deeplabcut()
 
+    @pyqtSlot()
     def _selectDLCModel(self):
-        self.main_widget._DLCModel()
-
+        self.main_widget._dlc_model()
+    
+    @pyqtSlot()
+    def _extractPupilSize(self):
+        self.main_widget._extract_pupil_size()
+    @pyqtSlot()
     def _exitaction(self):
         if self.ic.IC_IsDevValid(self.main_widget.camera):
             self.ic.IC_StopLive(self.main_widget.camera)

@@ -4,18 +4,15 @@ from lib import tisgrabber as tis
 import numpy as np
 import ctypes, time
 from lib.utils import find_circle, make_circle
-from typing import Dict
+from typing import Dict, Tuple, Union
 
-class LiveDisplay(QThread):
+class GetCamImage(QThread):
+    # signal for live imaging
     Pixmap_display = pyqtSignal(dict) # captured image
 
-    # triggered recording
-    recording_termination = pyqtSignal()
-    save_img = pyqtSignal(int, np.ndarray)
-
-    # manual recording mode
-    recording_termination = pyqtSignal()
-    save_img = pyqtSignal(int, np.ndarray)
+    # signals triggered and manual recording mode
+    recording_termination = pyqtSignal() # strop recording
+    save_img = pyqtSignal(int, np.ndarray) # save image
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -34,11 +31,17 @@ class LiveDisplay(QThread):
         # initial avg value is 30 Hz, sampling = 25
         self.live_fps = np.ones(25)*30
 
+        # container to store signal
+        self.live_signal = {}
+
         # triggered recording
         self.keep_recording = True
 
     def run(self):
-        self.live_display_mode()
+        if self.parent.recording_type=='LiveDisplay':
+            self.live_display_mode()
+        elif self.parent.recording_type in ['Triggered', 'Manual']:
+            self.recording_mode()
 
     def resume(self):
         self.running = True
@@ -48,8 +51,26 @@ class LiveDisplay(QThread):
     
     def stop(self):
         self.running = False
+        self.keep_recording = False
         self.quit()
         self.wait(10000)
+    
+    def set_recording_mode(self):
+        self.stop()
+        self.running = True
+        self.keep_recording = True
+        self.start()
+
+    def _ready_trigger(self):
+        # ready TTL signal for triggered recording
+        while self.running:
+            # receive TTL signal
+            # default data value = [254] when trigger receiving device is connected to the TTL source using BNC cable
+            _, data = self.parent.trig.readAny(self.parent.startPort, self.parent.portCount)
+            
+            # when the device receive TTL signal, the data value becaomes [255]  
+            if data==[255]:
+                self.running = False
 
     def _ready_camera(self):
         # start camera for live
@@ -81,142 +102,93 @@ class LiveDisplay(QThread):
         qimage = QImage(img.data, img.shape[1], img.shape[0], img.strides[0],  QImage.Format_RGB888)
 
         return img, qimage
-                
+    
+    def _get_circle(self, img: np.ndarray) -> Tuple[Union[np.float, None], Union[np.float, None]]:
+        '''
+        ----------
+        Input Args
+        -----------
+        img : ndarray (2D image, width x height)
+            2D numpy array image  
+
+        ----------
+        Return
+        -----------
+        center : np.ndarray
+            x, y coordinates for center of circle
+        radius : np.float
+            radius of circle  
+        '''
+        dlc_output = self.parent.dlclive.get_pose(img)
+        center, radius, probability = find_circle(dlc_output)
+        
+        if probability >= self.parent.fit_threshold:
+            return center, radius
+        else:
+            return None, None
+
+    def _mov_avg_fps(self, start_time: float, end_time: float) -> float:
+        imaging_duration = end_time - start_time
+        fps = 0 if imaging_duration <= 0 else 1/imaging_duration
+        self.live_fps[0:-1] = self.live_fps[1:]
+        self.live_fps[-1] = fps
+        return self.live_fps.mean()
+
+    def _wait_imaging(self, start_time: float, end_time: float, frame_rate: float):
+        '''
+        make delay to adjust imaging spped
+        '''
+        capture_duration = end_time - start_time
+
+        # give time delay to adjust frame rate
+        if capture_duration < (1 / frame_rate):
+            sleep_time = (1/frame_rate) - capture_duration
+            time.sleep(sleep_time)
 
     def live_display_mode(self):
         self._ready_camera()
         
         while self.running:
-            # measure frame rate
-            loop_start = time.time()
+            loop_start = time.time() # loop starting time
             if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
+                # get image from camera
+                img, self.live_signal['image'] = self._get_sanp() 
                 
-                img, qimage = self._get_sanp()
+                if self.parent.show_circle.isChecked(): # check dynamic pupil size measurements
+                    # get center and radius of pupil
+                    self.live_signal['center'], self.live_signal['radius'] = self._get_circle(img) 
 
-                # signal container
-                live_signal = {}
+            loop_end = time.time() # imaging end time
 
-                if self.parent.show_circle.isChecked():
-                    dlc_output = self.parent.dlclive.get_pose(img)
-                    center, radius, probability = find_circle(dlc_output)
-                    if probability >= self.parent.fit_threshold:
-                        live_signal['center'] = center
-                        live_signal['radius'] = radius
+            self.live_signal['frame_rate'] = self._mov_avg_fps(loop_start, loop_end) # get frame rate
+            self.Pixmap_display.emit(self.live_signal) # emit image signal to display
 
-                live_signal['image'] = qimage
-                
-
-                loop_end = time.time()
-                duration = loop_end - loop_start
-                fps = 0 if duration <= 0 else 1/duration
-                self.live_fps[0:-1] = self.live_fps[1:]
-                self.live_fps[-1] = fps
-
-                live_signal['frame_rate'] = self.live_fps.mean()
-                self.Pixmap_display.emit(live_signal)
-
-    def triggered_recording_mode(self):
-        while self.running:
-            # receive TTL signal
-            # default data value = [254] when trigger receiving device is connected to the TTL source using BNC cable
-            _, data = self.parent.trig.readAny(self.parent.startPort, self.parent.portCount)
-            
-            # when the device receive TTL signal, the data value becaomes [255]  
-            if data==[255]:
-                self.running = False
-
-        # start camera for live
-        self.ic.IC_StartLive(self.camera, 0)
-
-        # Query the values
-        self.ic.IC_GetImageDescription(self.camera, self.Width, self.Height, self.BitsPerPixel, self.colorformat)
-        
-        # Calculate the buffer size    
-        self.bpp = int(self.BitsPerPixel.value / 8.0 )
-        self.buffer_size = self.Width.value * self.Height.value * self.BitsPerPixel.value
+    def recording_mode(self):
+        if self.parent.recording_type=='Triggered':
+            self._ready_trigger()
+        self._ready_camera()
               
-
-        # loop_start = time.time()
         for idx in range(self.parent.frames):
-            frame_start = time.time()
+            loop_start = time.time() # loop starting time
             if not self.keep_recording:
                 return
 
             if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
                 # Get the image data
-                imagePtr =  self.ic.IC_GetImagePtr(self.camera)
+                img, self.live_signal['image'] = self._get_sanp() 
 
-                imagedata = ctypes.cast(imagePtr, ctypes.POINTER(ctypes.c_ubyte * self.buffer_size))
+                if self.parent.show_circle.isChecked(): # check dynamic pupil size measurements
+                    # get center and radius of pupil
+                    self.live_signal['center'], self.live_signal['radius'] = self._get_circle(img) 
 
-                # Create the numpy array
-                img = np.ndarray(buffer = imagedata.contents,
-                        dtype = np.uint8,
-                        shape = (self.Height.value,
-                                self.Width.value,
-                                self.bpp))
+            loop_end = time.time() # imaging end time
+            self._wait_imaging(loop_start, loop_end, self.parent.frame_rate) # wait to adjust imaging speed
 
-                # correct channel order                                
-                img[:, :, :] = img[:, :, ::-1]
-                self.save_img.emit(idx, img)
+            wait_end = time.time() # loop end time (total duration = imaging time + waiting time)
+            self.live_signal['frame_rate'] = self._mov_avg_fps(loop_start, wait_end) # get frame rate
 
-            frame_end = time.time()
-            capture_duration = frame_end - frame_start
-            
-            # give time delay to adjust frame rate
-            if capture_duration < (1 / self.parent.frame_rate):
-                sleep_time = (1/self.parent.frame_rate) - capture_duration
-                time.sleep(sleep_time)
-            
-        # loop_end = time.time()
-        # loop_dur = loop_end - loop_start
-        # calculate frame rate
-        # print(f'finish_imaging : {loop_end - loop_start:.5f} sec')
-        # print(f'frame rates : {self.parent.frames / (loop_end - loop_start):.5f} fps')
-        # print(f'error {loop_dur - 1 / self.parent.frame_rate * self.parent.frames:.5f} s')
-        # print(f'error {100 * (loop_dur - 1 / self.parent.frame_rate * self.parent.frames) / (1 / self.parent.frame_rate * self.parent.frames):.05f} %')
-
-        self.recording_termination.emit()
-
-    def manual_recording_mode(self):
-        # start camera for live
-        self.ic.IC_StartLive(self.camera, 0)
-
-        # Query the values
-        self.ic.IC_GetImageDescription(self.camera, self.Width, self.Height, self.BitsPerPixel, self.colorformat)
-        
-        # Calculate the buffer size    
-        self.bpp = int(self.BitsPerPixel.value / 8.0 )
-        self.buffer_size = self.Width.value * self.Height.value * self.BitsPerPixel.value
-              
-        for idx in range(self.parent.frames):
-            frame_start = time.time()
-            if not self.keep_recording:
-                return
-
-            if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
-                # Get the image data
-                imagePtr =  self.ic.IC_GetImagePtr(self.camera)
-
-                imagedata = ctypes.cast(imagePtr, ctypes.POINTER(ctypes.c_ubyte * self.buffer_size))
-
-                # Create the numpy array
-                img = np.ndarray(buffer = imagedata.contents,
-                        dtype = np.uint8,
-                        shape = (self.Height.value,
-                                self.Width.value,
-                                self.bpp))
-
-                # correct channel order                                
-                img[:, :, :] = img[:, :, ::-1]
-                self.save_img.emit(idx, img)
-
-            frame_end = time.time()
-            capture_duration = frame_end - frame_start
-            
-            # give time delay to adjust frame rate
-            if capture_duration < (1 / self.parent.frame_rate):
-                sleep_time = (1/self.parent.frame_rate) - capture_duration
-                time.sleep(sleep_time)
+            self.Pixmap_display.emit(self.live_signal) # emit image signal to display
+            self.save_img.emit(idx, img) # emit image signal to save
 
         self.recording_termination.emit()
 
@@ -239,165 +211,5 @@ class RefreshDevState(QThread):
 
     def stop(self):
         self.running = False
-        self.quit()
-        self.wait(10000)
-
-class TriggeredRecording(QThread):
-    recording_termination = pyqtSignal()
-    save_img = pyqtSignal(int, np.ndarray)
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent = parent
-        self.running = True
-        self.keep_recording = True
-
-        self.camera = parent.camera
-        self.ic = parent.ic
-
-        self.Width = ctypes.c_long()
-        self.Height = ctypes.c_long()
-        self.BitsPerPixel = ctypes.c_int()
-        self.colorformat = ctypes.c_int()
-
-    def run(self):
-        while self.running:
-            # receive TTL signal
-            # default data value = [254] when trigger receiving device is connected to the TTL source using BNC cable
-            _, data = self.parent.trig.readAny(self.parent.startPort, self.parent.portCount)
-            
-            # when the device receive TTL signal, the data value becaomes [255]  
-            if data==[255]:
-                self.running = False
-
-        # start camera for live
-        self.ic.IC_StartLive(self.camera, 0)
-
-        # Query the values
-        self.ic.IC_GetImageDescription(self.camera, self.Width, self.Height, self.BitsPerPixel, self.colorformat)
-        
-        # Calculate the buffer size    
-        self.bpp = int(self.BitsPerPixel.value / 8.0 )
-        self.buffer_size = self.Width.value * self.Height.value * self.BitsPerPixel.value
-              
-
-        # loop_start = time.time()
-        for idx in range(self.parent.frames):
-            frame_start = time.time()
-            if not self.keep_recording:
-                return
-
-            if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
-                # Get the image data
-                imagePtr =  self.ic.IC_GetImagePtr(self.camera)
-
-                imagedata = ctypes.cast(imagePtr, ctypes.POINTER(ctypes.c_ubyte * self.buffer_size))
-
-                # Create the numpy array
-                img = np.ndarray(buffer = imagedata.contents,
-                        dtype = np.uint8,
-                        shape = (self.Height.value,
-                                self.Width.value,
-                                self.bpp))
-
-                # correct channel order                                
-                img[:, :, :] = img[:, :, ::-1]
-                self.save_img.emit(idx, img)
-
-            frame_end = time.time()
-            capture_duration = frame_end - frame_start
-            
-            # give time delay to adjust frame rate
-            if capture_duration < (1 / self.parent.frame_rate):
-                sleep_time = (1/self.parent.frame_rate) - capture_duration
-                time.sleep(sleep_time)
-            
-        # loop_end = time.time()
-        # loop_dur = loop_end - loop_start
-        # calculate frame rate
-        # print(f'finish_imaging : {loop_end - loop_start:.5f} sec')
-        # print(f'frame rates : {self.parent.frames / (loop_end - loop_start):.5f} fps')
-        # print(f'error {loop_dur - 1 / self.parent.frame_rate * self.parent.frames:.5f} s')
-        # print(f'error {100 * (loop_dur - 1 / self.parent.frame_rate * self.parent.frames) / (1 / self.parent.frame_rate * self.parent.frames):.05f} %')
-
-        self.recording_termination.emit()
-
-    def pause(self):
-        self.running =False
-    
-    def stop(self):
-        self.running = False
-        self.keep_recording = False
-        self.quit()
-        self.wait(10000)
-
-
-class StartRecording(QThread):
-    recording_termination = pyqtSignal()
-    save_img = pyqtSignal(int, np.ndarray)
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent = parent
-        self.running = True
-        self.keep_recording = True
-
-        self.camera = parent.camera
-        self.ic = parent.ic
-
-        self.Width = ctypes.c_long()
-        self.Height = ctypes.c_long()
-        self.BitsPerPixel = ctypes.c_int()
-        self.colorformat = ctypes.c_int()
-
-    def run(self):
-        # start camera for live
-        self.ic.IC_StartLive(self.camera, 0)
-
-        # Query the values
-        self.ic.IC_GetImageDescription(self.camera, self.Width, self.Height, self.BitsPerPixel, self.colorformat)
-        
-        # Calculate the buffer size    
-        self.bpp = int(self.BitsPerPixel.value / 8.0 )
-        self.buffer_size = self.Width.value * self.Height.value * self.BitsPerPixel.value
-              
-        for idx in range(self.parent.frames):
-            frame_start = time.time()
-            if not self.keep_recording:
-                return
-
-            if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
-                # Get the image data
-                imagePtr =  self.ic.IC_GetImagePtr(self.camera)
-
-                imagedata = ctypes.cast(imagePtr, ctypes.POINTER(ctypes.c_ubyte * self.buffer_size))
-
-                # Create the numpy array
-                img = np.ndarray(buffer = imagedata.contents,
-                        dtype = np.uint8,
-                        shape = (self.Height.value,
-                                self.Width.value,
-                                self.bpp))
-
-                # correct channel order                                
-                img[:, :, :] = img[:, :, ::-1]
-                self.save_img.emit(idx, img)
-
-            frame_end = time.time()
-            capture_duration = frame_end - frame_start
-            
-            # give time delay to adjust frame rate
-            if capture_duration < (1 / self.parent.frame_rate):
-                sleep_time = (1/self.parent.frame_rate) - capture_duration
-                time.sleep(sleep_time)
-
-        self.recording_termination.emit()
-
-    def pause(self):
-        self.running =False
-    
-    def stop(self):
-        self.running = False
-        self.keep_recording = False
         self.quit()
         self.wait(10000)
