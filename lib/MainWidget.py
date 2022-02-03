@@ -1,4 +1,4 @@
-import sys, os, shutil, ctypes, re
+import sys, os, shutil, ctypes, re, csv
 from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QInputDialog, QSplitter, QTreeView, QWidget, QPushButton, \
                             QHBoxLayout, QVBoxLayout, \
@@ -15,7 +15,7 @@ from skimage import io
 from datetime import datetime
 import cv2
 from dlclive import DLCLive, Processor
-from typing import Dict, List
+from typing import Dict, List, Union
 import deeplabcut
 
 from lib.utils import find_circle
@@ -118,7 +118,7 @@ class MainWidget(QWidget):
         # if yes, record movie without monitoring
         if reply==QMessageBox.Yes:
             QMessageBox.about(self, 'Select DeepLabCut model', \
-                            f'Select DeepLabCut model path where include "pose_cfg.yaml" file')
+                            f'Select DeepLabCut model path where containing "pose_cfg.yaml" file')
             try:
                 dlc_proc = Processor()
                 self.dlc_model_path = QFileDialog.getExistingDirectory()
@@ -126,6 +126,7 @@ class MainWidget(QWidget):
                 self.dlclive.init_inference()
                 self.dynamic_plot = True
                 self._dynamicplot_set(self.dynamic_plot)
+                self._define_data_parser()
             except:
                 QMessageBox.about(self, 'Failed to select DeepLabCut model', \
                             f'Please check the model path and "pose_cfg.yaml" file')
@@ -137,31 +138,56 @@ class MainWidget(QWidget):
         '''
         Extract pupil size from saved images
         '''
-        # if not self.dynamic_plot:
-        #     self._dlc_model()
-        # QMessageBox.about(self, 'Select directories ', \
-        #                     f'Select directories include pupil images')
+        if not self.dynamic_plot:
+            self._dlc_model()
+        QMessageBox.about(self, 'Select directories ', \
+                            f'Select directories containing pupil images')
 
         dir_paths = self._get_dir_paths()
-        self._define_data_parser()
+        
+        if len(dir_paths) > 0: # one or more directories are selected, execute the loop
+            for path in dir_paths:
+                img_names = [names for names in os.listdir(path) if names.endswith(self.img_formats)]
+                img_names = sorted(img_names, key=lambda x: int(x[:6]))
 
-        for path in dir_paths:
-            img_names = [names for names in os.listdir(path) if names.endswith(self.img_formats)]
-            img_names = sorted(img_names, key=lambda x: int(x[:6]))
+                if len(img_names) > 0: # if no images, run the next loop
+                    pupil_data = []
 
-            pupil_data = {}
+                    for idx, img_name in enumerate(img_names):
+                        img_data = {}
+                        img = io.imread(os.path.join(path, img_name))
+                        
+                        meta = self.parser.search(img_name)
+                        if meta==None:
+                            img_index = idx
+                        else:
+                            img_index = int(meta.group('index'))
 
-            for idx, img_name in enumerate(img_names):
-                img = io.imread(os.path.join(path, img_name)) 
-                dlc_output = self.dlclive.get_pose(img)
-                center, radius, probability, num_points = find_circle(dlc_output)
-                xc, yc = center
-                index = int(img_name[:6])
-                time_stamp = img_name
-                values = []
+                        time_stamp = self._parse_timestamp(meta)
+                        
+                        self._metadatar_parsing(img_data, img_index, img_name, time_stamp) # save metadata
+                        dlc_output = self.dlclive.get_pose(img) # key points coordinate
+                        self._pupil_parsing(img_data, dlc_output)
+                        
+                        if idx==0:
+                            self.keys = img_data.keys()
+                        pupil_data.append(img_data)
+                    
+                    try:
+                        with open(f'{path}.csv', 'w', newline='') as f:
+                            writer = csv.DictWriter(f, fieldnames=self.keys)
+                            writer.writeheader()
+                            for row in pupil_data:
+                                writer.writerow(row)
+                    except:
+                        QMessageBox.about(self, 'Save error!', \
+                            f'Save error for "{os.path.basename(path)}" directory')
+
 
     def _get_dir_paths(self) -> List[str]:
         '''
+        get directories' name from file manager
+
         ----------
         Return
         -----------
@@ -172,26 +198,86 @@ class MainWidget(QWidget):
         dialog.setWindowTitle('Choose Directories')
         dialog.setOption(QFileDialog.DontUseNativeDialog, True)
         dialog.setFileMode(QFileDialog.DirectoryOnly)
+        dialog.setDirectory(os.getcwd())
         for view in dialog.findChildren((QListView, QTreeView)):
             if isinstance(view.model(), QFileSystemModel):
                 view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         if dialog.exec_() == QDialog.Accepted:
             dir_paths = dialog.selectedFiles()
-
-        return dir_paths
+            return dir_paths
+        else:
+            return []
 
     def _define_data_parser(self):
-        self.data_keys = ['index', 'time_stamp', 'time_sec', \
-                        'year', 'month', 'day', 'hour', 'min', 'sec', \
-                        'num_points', 'xc', 'yc', 'radius', 'probability']
-        self.parser = re.compile('(?P<index>\d{6})\
-                                _(?P<time_stamp>(?P<year>\d{4})\
-                                -(?P<month>\d{2})\
-                                -(?P<day>\d{2})\
-                                _(?P<hour>\d{2})hr\
-                                -(?P<min>\d{2})min\
-                                -(?P<sec>\d{2}.\d{6}sec).tif',
-                                re.VERBOSE)
+        self.metadata_keys = ['index', 'img_name', 'time_stamp', 'time']
+        self.dlc_keys = ['num_points', 'xc', 'yc', 'radius', 'probability']
+        self.parser = re.compile('(?P<index>\d{6})_(?P<time_stamp>\d{4}-\d{2}-\d{2}_\d{2}hr-\d{2}min-\d{2}.\d{6}sec).tif')
+
+    def _parse_timestamp(self, meta: Union[re.Match, None]) -> Union[None, datetime]:
+        '''
+        timestamp parsing from image name
+        ----------
+        Input Args
+        -----------
+        meta : re.Match or NoneType
+            regular expression parser for data extraction
+        '''
+        if meta==None:
+            return None
+        else:
+            time_stamp = datetime.strptime(meta.group('time_stamp'), '%Y-%m-%d_%Hhr-%Mmin-%S.%fsec')
+            return time_stamp
+
+    def _metadatar_parsing(self, img_data: Dict, img_index: int, img_name: str, time_stamp: Union[datetime, None]):
+        '''
+        Metadata parsing from image name
+        ----------
+        Input Args
+        -----------
+        img_data : dict
+            dictionary to store metadate
+        img_index : int
+            index based on image name
+        img_name : str
+            image name
+        time_stamp : None or datetime.datetime
+            time stamp when image was acquired
+        '''
+        # if no metadata, assign index depend on image name 
+        if time_stamp==None:
+            img_data['index'] = img_index
+            img_data['img_name'] = img_name
+            img_data['time_stamp'], img_data['time (sec)'] = '', ''
+        else:
+            if img_index==0: # if first image, save time stamp to get relative imaging time
+                self.first_time_stamp = time_stamp
+
+            img_data['index'] = img_index
+            img_data['img_name'] = img_name
+            img_data['time_stamp'] = datetime.strftime(time_stamp, '%Y-%m-%d_%H:%M:%S.%f')
+            img_data['time (sec)'] = (time_stamp - self.first_time_stamp).total_seconds() # relative imaging time
+
+    def _pupil_parsing(self, img_data: Dict, dlc_output: np.ndarray):
+        '''
+        Pupil data parsing from image
+        ----------
+        Input Args
+        -----------
+        img_data : dict
+            dictionary to store metadate
+        dlc_output : np.ndarray
+            key points coordinates and probability
+        '''
+        center, radius, probability, num_points = find_circle(dlc_output) # dlc outputs
+        xc, yc = center # pupil center coordinates
+
+        for dlc_key, dlc_value in zip(self.dlc_keys, [num_points, xc, yc, radius, probability]):
+            img_data[dlc_key] = dlc_value # store dlc output
+        
+        for idx, coords in enumerate(dlc_output): # extract key point coordinates
+            x, y, _ = coords
+            img_data[f'x{idx}'] = x # x-coordinate of n th key point 
+            img_data[f'y{idx}'] = y # y-coordinate of n th key point
 
     # movie widget
     def _add_movie_widget(self):
@@ -695,19 +781,20 @@ class MainWidget(QWidget):
             self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_width, self.img_height))
 
 
-    @pyqtSlot(int, np.ndarray)
-    def _save_img(self, idx: int, img: np.ndarray):
+    @pyqtSlot(dict)
+    def _save_img(self, live_signal: Dict):
         '''
-        idx: 
-            index of image
-        img:
-            recorded image
+        live_signal:
+            dictionary contain image and metadata
         '''
+        idx = live_signal.get('index')
+        img = live_signal.get('image')
+        current_time = live_signal.get('time_stamp').strftime('%Y-%m-%d_%Hhr-%Mmin-%S.%fsec')
+        time_stamp = live_signal.get('time_stamp')
+        dlc_output = live_signal.get('dlc_output')
+
         # set save path and image name
-        save_dir = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}'
-        current_time = datetime.now()
-        current_time = current_time.strftime('%Y-%m-%d_%Hhr-%Mmin-%S.%fsec')
-        
+        save_dir = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}'        
         img_name = f'{idx:06d}_{current_time}.tif'
 
         # update recording progress
@@ -726,6 +813,31 @@ class MainWidget(QWidget):
             # reset progress monitor
             self.progress_check.setText(f'Progress | {0:06d}/{self.frames:06d}')
 
+        
+        # save data (pupil size and metadata)
+        if self.show_circle.isChecked() and self.dynamic_plot:
+            live_img_data = {}
+            self._metadatar_parsing(live_img_data, idx, img_name, time_stamp)
+            self._pupil_parsing(live_img_data, dlc_output)
+
+            if idx==0:
+                self.keys = live_img_data.keys()
+            
+            try:
+                if not os.path.exists(f'{save_dir}.csv'):
+                    with open(f'{save_dir}.csv', 'w', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=self.keys)
+                        writer.writeheader()
+                        writer.writerow(live_img_data)
+                else:
+                    with open(f'{save_dir}.csv', 'a', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=self.keys)
+                        writer.writerow(live_img_data)
+
+            except:
+                QMessageBox.about(self, 'Save error!', \
+                    f'Save error for "{os.path.basename(file_name)}" directory')
+
 
     '''
     functions (slots) resppond to Thread
@@ -733,16 +845,16 @@ class MainWidget(QWidget):
     @pyqtSlot(dict)
     def display_image(self, live_signal: Dict):
         '''
-        QImage:
-            recorded image for live display
+        live_signal:
+            dictionary contain image and metadata
         '''
-        center, radius, img, fps = (live_signal.get(key) for key in ['center', 'radius', 'image', 'frame_rate']) 
-
+        center, radius, img, fps, probability = (live_signal.get(key) for key in ['center', 'radius', 'qimage', 'frame_rate', 'probability']) 
+        
         self.live_pixmap = QPixmap.fromImage(img)
         self.live_pixmap.scaled(self.img_width, self.img_height, Qt.KeepAspectRatioByExpanding)
         self.display_label.setPixmap(self.live_pixmap)
         
-        if self.show_circle.isChecked() and (center is not None) and (radius is not None):
+        if self.show_circle.isChecked() and (probability >= self.fit_threshold):
             painter = QPainter(self.display_label.pixmap())
             painter.setPen(QPen(Qt.red, 1))
             painter.drawEllipse(center[0] - radius, center[1] - radius, radius*2, radius*2)

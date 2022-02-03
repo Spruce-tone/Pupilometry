@@ -99,7 +99,7 @@ class pupil(QMainWindow):
             self.ic.IC_StopLive(self.main_widget.camera)
             self.ic.IC_ReleaseGrabber(self.main_widget.camera)
         self.main_widget.refresh_dev.stop()
-        self.main_widget.live.stop()
+        self.main_widget.get_img.stop()
         qApp.quit()
 
 if __name__=='__main__':

@@ -5,14 +5,15 @@ import numpy as np
 import ctypes, time
 from lib.utils import find_circle, make_circle
 from typing import Dict, Tuple, Union
+from datetime import datetime
 
 class GetCamImage(QThread):
     # signal for live imaging
     Pixmap_display = pyqtSignal(dict) # captured image
 
     # signals triggered and manual recording mode
-    recording_termination = pyqtSignal() # strop recording
-    save_img = pyqtSignal(int, np.ndarray) # save image
+    recording_termination = pyqtSignal() # stop recording
+    save_img = pyqtSignal(dict) # save image
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -103,7 +104,7 @@ class GetCamImage(QThread):
 
         return img, qimage
     
-    def _get_circle(self, img: np.ndarray) -> Tuple[Union[np.float, None], Union[np.float, None]]:
+    def _get_circle(self, img: np.ndarray) -> Tuple[float, float, float, np.ndarray]:
         '''
         ----------
         Input Args
@@ -117,15 +118,15 @@ class GetCamImage(QThread):
         center : np.ndarray
             x, y coordinates for center of circle
         radius : np.float
-            radius of circle  
+            radius of circle
+        probability : float
+            averaged key point recognition probability
+        dlc_output : np.ndarray (dimension - No. key points * [x, y, probability])
+            key points coordinate and probability  
         '''
         dlc_output = self.parent.dlclive.get_pose(img)
         center, radius, probability, _ = find_circle(dlc_output)
-        
-        if probability >= self.parent.fit_threshold:
-            return center, radius
-        else:
-            return None, None
+        return center, radius, probability, dlc_output
 
     def _mov_avg_fps(self, start_time: float, end_time: float) -> float:
         imaging_duration = end_time - start_time
@@ -152,11 +153,11 @@ class GetCamImage(QThread):
             loop_start = time.time() # loop starting time
             if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
                 # get image from camera
-                img, self.live_signal['image'] = self._get_sanp() 
+                img, self.live_signal['qimage'] = self._get_sanp() 
                 
                 if self.parent.show_circle.isChecked(): # check dynamic pupil size measurements
                     # get center and radius of pupil
-                    self.live_signal['center'], self.live_signal['radius'] = self._get_circle(img) 
+                    self.live_signal['center'], self.live_signal['radius'], self.live_signal['probability'], _ = self._get_circle(img) 
 
             loop_end = time.time() # imaging end time
 
@@ -175,20 +176,24 @@ class GetCamImage(QThread):
 
             if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
                 # Get the image data
-                img, self.live_signal['image'] = self._get_sanp() 
+                img, self.live_signal['qimage'] = self._get_sanp()
+                self.live_signal['time_stamp'] = datetime.now()
 
                 if self.parent.show_circle.isChecked(): # check dynamic pupil size measurements
                     # get center and radius of pupil
-                    self.live_signal['center'], self.live_signal['radius'] = self._get_circle(img) 
+                    self.live_signal['center'], self.live_signal['radius'], _, self.live_signal['dlc_output'] = self._get_circle(img) 
+
 
             loop_end = time.time() # imaging end time
             self._wait_imaging(loop_start, loop_end, self.parent.frame_rate) # wait to adjust imaging speed
 
             wait_end = time.time() # loop end time (total duration = imaging time + waiting time)
             self.live_signal['frame_rate'] = self._mov_avg_fps(loop_start, wait_end) # get frame rate
+            self.live_signal['index'] = idx
+            self.live_signal['image'] = img
 
             self.Pixmap_display.emit(self.live_signal) # emit image signal to display
-            self.save_img.emit(idx, img) # emit image signal to save
+            self.save_img.emit(self.live_signal) # emit image signal to save
 
         self.recording_termination.emit()
 
