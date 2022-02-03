@@ -63,8 +63,12 @@ class GetCamImage(QThread):
         self.start()
 
     def _ready_trigger(self):
-        # ready TTL signal for triggered recording
-        # Vmin = 0V, Vmax = 5V, duration > 200 ms
+        '''
+        ready TTL signal for triggered recording
+        Vmin = 0V, Vmax = 5V, duration > 200 ms
+        TTL on state, data = 255
+        TTl off state, data = 254
+        '''
         self.outlier_check = np.array([0]*100) # to prevent outlier TTL signal, moving average filter
 
         while self.running:
@@ -123,16 +127,16 @@ class GetCamImage(QThread):
         -----------
         center : np.ndarray
             x, y coordinates for center of circle
-        radius : np.float
-            radius of circle
+        diameter : np.float
+            diameter of circle
         probability : float
             averaged key point recognition probability
         dlc_output : np.ndarray (dimension - No. key points * [x, y, probability])
             key points coordinate and probability  
         '''
         dlc_output = self.parent.dlclive.get_pose(img)
-        center, radius, probability, _ = find_circle(dlc_output)
-        return center, radius, probability, dlc_output
+        center, diameter, probability, _ = find_circle(dlc_output)
+        return center, diameter, probability, dlc_output
 
     def _mov_avg_fps(self, start_time: float, end_time: float) -> float:
         imaging_duration = end_time - start_time
@@ -162,8 +166,8 @@ class GetCamImage(QThread):
                 img, self.live_signal['qimage'] = self._get_sanp() 
                 
                 if self.parent.show_circle.isChecked(): # check dynamic pupil size measurements
-                    # get center and radius of pupil
-                    self.live_signal['center'], self.live_signal['radius'], self.live_signal['probability'], _ = self._get_circle(img) 
+                    # get center and diameter of pupil
+                    self.live_signal['center'], self.live_signal['diameter'], self.live_signal['probability'], _ = self._get_circle(img) 
 
             loop_end = time.time() # imaging end time
 
@@ -186,8 +190,8 @@ class GetCamImage(QThread):
                 self.live_signal['time_stamp'] = datetime.now()
 
                 if self.parent.show_circle.isChecked(): # check dynamic pupil size measurements
-                    # get center and radius of pupil
-                    self.live_signal['center'], self.live_signal['radius'], _, self.live_signal['dlc_output'] = self._get_circle(img) 
+                    # get center and diameter of pupil
+                    self.live_signal['center'], self.live_signal['diameter'], _, self.live_signal['dlc_output'] = self._get_circle(img) 
 
 
             loop_end = time.time() # imaging end time

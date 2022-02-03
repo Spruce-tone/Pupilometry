@@ -1,5 +1,6 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, qApp, QDesktopWidget
+from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, \
+                            qApp, QDesktopWidget, QMessageBox, QWidget, QTabWidget
 from PyQt5.QtCore import pyqtSlot
 from lib.MainWidget import MainWidget
 
@@ -66,12 +67,13 @@ class pupil(QMainWindow):
         extractPupilsizeAction = QAction('Extract Pupil size', self)
         extractPupilsizeAction.triggered.connect(self._extractPupilSize)
         self.dlcMenu.addAction(extractPupilsizeAction)
-        
+
         # Exit menue
         exitAction = QAction('Exit', self)
         exitAction.setShortcut('Ctrl+Q')
         exitAction.triggered.connect(self._exitaction)
         self.fileMenu.addAction(exitAction)
+
 
     @pyqtSlot()
     def _selectdevice(self):

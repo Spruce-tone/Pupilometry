@@ -4,7 +4,8 @@ from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QHBoxLayout, QVBoxLayout, \
                             QFrame, QGridLayout, QLabel, QGroupBox, \
                             QLineEdit, QAbstractItemView, QMessageBox, \
-                            QProgressBar, QCheckBox, QListView, QDialog
+                            QProgressBar, QCheckBox, QListView, QDialog, \
+                            QTabWidget
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, \
                         QIntValidator, QPainter, QPen
@@ -42,7 +43,7 @@ class MainWidget(QWidget):
 
         # Define main layout
         self.main_layout = QHBoxLayout()
-        
+
         # Generate and assign the frame layout
         self._generate_frames()
         self._main_division()
@@ -210,7 +211,7 @@ class MainWidget(QWidget):
 
     def _define_data_parser(self):
         self.metadata_keys = ['index', 'img_name', 'time_stamp', 'time']
-        self.dlc_keys = ['num_points', 'xc', 'yc', 'radius', 'probability']
+        self.dlc_keys = ['num_points', 'xc', 'yc', 'diameter', 'probability']
         self.parser = re.compile('(?P<index>\d{6})_(?P<time_stamp>\d{4}-\d{2}-\d{2}_\d{2}hr-\d{2}min-\d{2}.\d{6}sec).tif')
 
     def _parse_timestamp(self, meta: Union[re.Match, None]) -> Union[None, datetime]:
@@ -268,10 +269,10 @@ class MainWidget(QWidget):
         dlc_output : np.ndarray
             key points coordinates and probability
         '''
-        center, radius, probability, num_points = find_circle(dlc_output) # dlc outputs
+        center, diameter, probability, num_points = find_circle(dlc_output) # dlc outputs
         xc, yc = center # pupil center coordinates
 
-        for dlc_key, dlc_value in zip(self.dlc_keys, [num_points, xc, yc, radius, probability]):
+        for dlc_key, dlc_value in zip(self.dlc_keys, [num_points, xc, yc, diameter, probability]):
             img_data[dlc_key] = dlc_value # store dlc output
         
         for idx, coords in enumerate(dlc_output): # extract key point coordinates
@@ -848,7 +849,7 @@ class MainWidget(QWidget):
         live_signal:
             dictionary contain image and metadata
         '''
-        center, radius, img, fps, probability = (live_signal.get(key) for key in ['center', 'radius', 'qimage', 'frame_rate', 'probability']) 
+        center, diameter, img, fps, probability = (live_signal.get(key) for key in ['center', 'diameter', 'qimage', 'frame_rate', 'probability']) 
         
         self.live_pixmap = QPixmap.fromImage(img)
         self.live_pixmap.scaled(self.img_width, self.img_height, Qt.KeepAspectRatioByExpanding)
@@ -857,7 +858,7 @@ class MainWidget(QWidget):
         if self.show_circle.isChecked() and (probability >= self.fit_threshold):
             painter = QPainter(self.display_label.pixmap())
             painter.setPen(QPen(Qt.red, 1))
-            painter.drawEllipse(center[0] - radius, center[1] - radius, radius*2, radius*2)
+            painter.drawEllipse(center[0] - diameter/2, center[1] - diameter/2, diameter, diameter)
 
         self.live_frame_rate.setText(f'Frame rate : {fps:2.2f}')
 
