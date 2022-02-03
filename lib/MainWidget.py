@@ -700,7 +700,7 @@ class MainWidget(QWidget):
             # disable any button and input during trigger and dynamic plot setting
             self._set_enable_inputs(False)
             self._dynamicplot_set(False)
-            
+
             # ready TTL trigger
             # if the device receive TTL signal, start recording 
             self.recording_type = 'Triggered'

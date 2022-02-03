@@ -64,13 +64,19 @@ class GetCamImage(QThread):
 
     def _ready_trigger(self):
         # ready TTL signal for triggered recording
+        # Vmin = 0V, Vmax = 5V, duration > 200 ms
+        self.outlier_check = np.array([0]*100) # to prevent outlier TTL signal, moving average filter
+
         while self.running:
             # receive TTL signal
             # default data value = [254] when trigger receiving device is connected to the TTL source using BNC cable
             _, data = self.parent.trig.readAny(self.parent.startPort, self.parent.portCount)
             
+            self.outlier_check[:-1] = self.outlier_check[1:]
+            self.outlier_check[-1] = data[0]-254
+            
             # when the device receive TTL signal, the data value becaomes [255]  
-            if data==[255]:
+            if data==[255] and (self.outlier_check.sum() >= 25):
                 self.running = False
 
     def _ready_camera(self):
