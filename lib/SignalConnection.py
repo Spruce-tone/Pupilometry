@@ -163,11 +163,12 @@ class GetCamImage(QThread):
             loop_start = time.time() # loop starting time
             if self.ic.IC_SnapImage(self.camera, 2000) == tis.IC_SUCCESS:
                 # get image from camera
-                img, self.live_signal['qimage'] = self._get_sanp() 
+                img, self.live_signal['qimage'] = self._get_sanp()
+                self.live_signal['time_stamp'] = datetime.now() 
                 
                 if self.parent.show_circle.isChecked(): # check dynamic pupil size measurements
                     # get center and diameter of pupil
-                    self.live_signal['center'], self.live_signal['diameter'], self.live_signal['probability'], _ = self._get_circle(img) 
+                    self.live_signal['center'], self.live_signal['diameter'], self.live_signal['probability'], self.live_signal['dlc_output'] = self._get_circle(img) 
 
             loop_end = time.time() # imaging end time
 

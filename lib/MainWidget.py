@@ -1,4 +1,7 @@
+from cgitb import enable, text
 import sys, os, shutil, ctypes, re, csv
+from tkinter import font
+from turtle import color
 from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QInputDialog, QSplitter, QTreeView, QWidget, QPushButton, \
                             QHBoxLayout, QVBoxLayout, \
@@ -8,8 +11,11 @@ from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QTabWidget
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, \
-                        QIntValidator, QPainter, QPen
-# from cv2 import FlannBasedMatcher
+                        QIntValidator, QPainter, QPen, QColor
+from matplotlib import style
+from matplotlib.pyplot import legend, title
+import pyqtgraph as pg
+
 from lib import tisgrabber as tis
 import numpy as np
 from skimage import io
@@ -18,7 +24,6 @@ import cv2
 from dlclive import DLCLive, Processor
 from typing import Dict, List, Union
 import deeplabcut
-
 from lib.utils import find_circle
 
 sys.path.append('./lib')
@@ -324,14 +329,102 @@ class MainWidget(QWidget):
         generate graph widget
         if start the dynamic pupil size measurements, plot the graph  
         '''
-        # generate display widget
+        # define frame styel
+        self.graph_frame.setFont(QFont('Arial', 12))
 
+        # set graph style
+        title_font = QFont('Arial')
+        title_style = {'color' : '#000000', 'size' : '30px'}
+        label_style = {'color' : '#000000', 'font-size' : '25px', 'font-family' : 'Arial'}
 
+        # define graph and axis
+        self.live_plot = pg.PlotWidget()
+        self.live_plot.addLegend(size=(30, 30))
+        self.live_plot.setBackground('w')
+        self.live_plot.setTitle('Pupil dynamics', **title_style)
+        self.live_plot.setLabel('left', text='Pupil diameter', units='pixel, a.u.', **label_style)
+        self.live_plot.setLabel('bottom', text='time', units='sec', **label_style)
+        self.live_plot.showGrid(x=True, y=True)
+
+        # apply axes style
+        plot_item = self.live_plot.getPlotItem()
+        plot_item.titleLabel.item.setFont(title_font)
+        plot_item.getAxis('left').setStyle(tickFont=QFont('Arial', 10))
+        plot_item.getAxis('bottom').setStyle(tickFont=QFont('Arial', 10))
+        plot_item.getAxis('left').setTextPen('k')
+        plot_item.getAxis('bottom').setTextPen('k')
+
+        # In progress Legend setting
+        # legend_item = pg.LegendItem(size=(30, 30), labelTextColor='#000000', labelTextSize=100)
+        # plot_item.legend.addItem(legend_item, name='asdfsdf')
+        # legend_item.setParentItem(self.live_plot.graphicsItem())
+        # self.live_plot.addLegend(size=(30, 30))
+        # self.live_plot.addItem(legend_item, name='asdfsdf')
+
+        # generate PlotDataItem object
+        self.raw_data_item = self.live_plot.plot(pen=pg.mkPen(style=Qt.NoPen), 
+                                                symbol='o', symbolPen='r', symbolSize=2,
+                                                symbolBrush=0.1, name='Raw')
+        self.avg_data_item = self.live_plot.plot(pen=pg.mkPen(width=1.5, color='b'), name='Avg')
+        self._init_plot_data()
+
+        
+        # # define widget
+        self.rescale_btn = QPushButton('Rescale')
+        self.rescale_btn.clicked.connect(self._rescale)
+
+        self.X_rescale_range_label = QLabel('No. points to plot')
+        self.X_rescale_range_edit = QLineEdit('1000')
+        self.num_plot_points = 1000
+        self.X_rescale_range_edit.setValidator(QIntValidator(0, 1000000, self)) # set available No. of frame range for recording
+        self.X_rescale_range_edit.textChanged.connect(self._num_points_to_plot)
+
+        self.Xauto_rescale_checkbox = QCheckBox('X Auto rescale')
+        self.Yauto_rescale_checkbox = QCheckBox('Y Auto rescale')
+        
+        # add widget
+        self.graph_layout.addWidget(self.live_plot, 1, 1, 10, 20)
+        self.graph_layout.addWidget(self.rescale_btn, 11, 1, 1, 2)
+        self.graph_layout.addWidget(self.X_rescale_range_label, 11, 4, 1, 4)
+        self.graph_layout.addWidget(self.X_rescale_range_edit, 11, 8, 1, 3)
+        self.graph_layout.addWidget(self.Xauto_rescale_checkbox, 11, 15, 1, 3)
+        self.graph_layout.addWidget(self.Yauto_rescale_checkbox, 11, 18, 1, 3)
+
+    @pyqtSlot()
+    def _num_points_to_plot(self):
+        self.num_plot_points = int(self.X_rescale_range_edit.text())
+
+    @pyqtSlot()
+    def _rescale(self):
+        if (len(self.plot_data['x'])==0) and (len(self.plot_data['y'])==0):
+            self.live_plot.setXRange(-5, 10)
+            self.live_plot.setYRange(-5, 10)
+        else:
+            xmin = self.plot_data['x'].min()
+            xmax = self.plot_data['x'].max()
+            ymin = self.plot_data['y'].min()
+            ymax = self.plot_data['y'].max()
+
+            self.live_plot.setXRange(xmin - np.abs(xmin)*0.05, xmax + np.abs(xmax)*0.05)
+            self.live_plot.setYRange(ymin - np.abs(ymin)*0.05, ymax + np.abs(ymax)*0.05)
+        self.live_plot.enableAutoRange()
+
+    def _init_plot_data(self):
+        self.plot_data = {'x' : np.array([]), 'y' : np.array([]), 'y_avg' : np.array([])}
+        
     def _dynamicplot_set(self, dynamic_plot_state: bool):
+        '''
+        Control activation state of the pupil fitting related panels
+        ----------
+        Input Args
+        -----------
+        dynamic_plot_state : bool
+            True : activate panels
+            False : deactivate panels
+        '''
         self.show_circle.setEnabled(dynamic_plot_state)
         self.set_thesh_label.setEnabled(dynamic_plot_state)
         self.set_fit_threshold.setEnabled(dynamic_plot_state)
-
 
     # device connection state
     def _dev_connection_state_widget(self):
@@ -506,7 +599,7 @@ class MainWidget(QWidget):
 
     def _generate_frames(self):
         '''
-        generate frames to use
+        generate frames
         '''
         self.movie_frame, self.movie_layout = self._set_frame(QGridLayout())
         self.graph_frame, self.graph_layout = self._set_frame(QGridLayout())
@@ -567,7 +660,12 @@ class MainWidget(QWidget):
         if not self.ic.IC_IsDevValid(self.camera):
             self._init_camera()
             self.get_img = GetCamImage(self)
-            self.get_img.Pixmap_display.connect(self.display_image)  
+            self.get_img.Pixmap_display.connect(self.display_image)
+
+        # initialize dynapic pupil size plot
+        self._init_plot_data()
+
+        # start live display  
         self.get_img.start()
         self.get_img.resume()
 
@@ -702,6 +800,9 @@ class MainWidget(QWidget):
             self._set_enable_inputs(False)
             self._dynamicplot_set(False)
 
+            # init plot data of pupil diameter 
+            self._init_plot_data()
+
             # ready TTL trigger
             # if the device receive TTL signal, start recording 
             self.recording_type = 'Triggered'
@@ -769,6 +870,9 @@ class MainWidget(QWidget):
             self._set_enable_inputs(False)
             self._dynamicplot_set(False)
             
+            # init plot data of pupil diameter 
+            self._init_plot_data()
+
             # start recording 
             self.recording_type = 'Manual'
             self.get_img.set_recording_mode()
@@ -780,7 +884,6 @@ class MainWidget(QWidget):
             video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
             fourcc = cv2.VideoWriter_fourcc(*'MJPG') # set codec  
             self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_width, self.img_height))
-
 
     @pyqtSlot(dict)
     def _save_img(self, live_signal: Dict):
@@ -849,16 +952,53 @@ class MainWidget(QWidget):
         live_signal:
             dictionary contain image and metadata
         '''
-        center, diameter, img, fps, probability = (live_signal.get(key) for key in ['center', 'diameter', 'qimage', 'frame_rate', 'probability']) 
+        center, diameter, img, fps, probability, dlc_output = (live_signal.get(key) for key in ['center', 'diameter', 'qimage', 'frame_rate', 'probability', 'dlc_output']) 
         
         self.live_pixmap = QPixmap.fromImage(img)
         self.live_pixmap.scaled(self.img_width, self.img_height, Qt.KeepAspectRatioByExpanding)
         self.display_label.setPixmap(self.live_pixmap)
         
+        # dynamic pupil fitting
         if self.show_circle.isChecked() and (probability >= self.fit_threshold):
+            # plot pupil circle
             painter = QPainter(self.display_label.pixmap())
             painter.setPen(QPen(Qt.red, 1))
             painter.drawEllipse(center[0] - diameter/2, center[1] - diameter/2, diameter, diameter)
+            
+            # plot key points
+            colors = ['#FF9900', '#33CC33', '#3399FF', '#FF3333']
+            for color, key_point in zip(colors, dlc_output):
+                painter.setPen(QPen(QColor(color), 4))
+                painter.drawPoint(key_point[0], key_point[1])
+            
+            # get time stamp to calculate relative time
+            if (len(self.plot_data['x'])==0) and (len(self.plot_data['y'])==0):
+                self.ref_datetime = live_signal['time_stamp']
+                self._rescale()
+
+            # data plot
+            relative_time = float((live_signal['time_stamp'] - self.ref_datetime).total_seconds())
+            self.plot_data['x'] = np.append(self.plot_data['x'], relative_time)
+            self.plot_data['y'] = np.append(self.plot_data['y'], diameter)
+            self.plot_data['y_avg'] = np.append(self.plot_data['y_avg'], self.plot_data['y'][-20:].mean()) \
+                                    if len(self.plot_data['y']) >= 20 \
+                                    else np.append(self.plot_data['y_avg'], self.plot_data['y'].mean())
+
+            print(self.num_plot_points)
+            # Set plot range
+            if self.Xauto_rescale_checkbox.isChecked():
+                xmin = self.plot_data['x'][-self.num_plot_points] \
+                        if len(self.plot_data['x']) >= self.num_plot_points \
+                        else self.plot_data['x'][0]
+                xmax = self.plot_data['x'][-1]
+                self.live_plot.setXRange(xmin, xmax)
+                # self.live_plot.enableAutoRange(axis='x', enable=True)
+            if self.Yauto_rescale_checkbox.isChecked():
+                self.live_plot.enableAutoRange(axis='y', enable=True)
+
+            # update date
+            self.raw_data_item.setData(self.plot_data['x'], self.plot_data['y'])
+            self.avg_data_item.setData(self.plot_data['x'], self.plot_data['y_avg'])
 
         self.live_frame_rate.setText(f'Frame rate : {fps:2.2f}')
 
