@@ -67,7 +67,7 @@ class GetCamImage(QThread):
         ready TTL signal for triggered recording
         Vmin = 0V, Vmax = 5V, duration > 200 ms
         TTL on state, data = 255
-        TTl off state, data = 254
+        TTL off state, data = 254
         '''
         self.outlier_check = np.array([0]*100) # to prevent outlier TTL signal, moving average filter
 

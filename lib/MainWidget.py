@@ -984,7 +984,6 @@ class MainWidget(QWidget):
                                     if len(self.plot_data['y']) >= 20 \
                                     else np.append(self.plot_data['y_avg'], self.plot_data['y'].mean())
 
-            print(self.num_plot_points)
             # Set plot range
             if self.Xauto_rescale_checkbox.isChecked():
                 xmin = self.plot_data['x'][-self.num_plot_points] \
