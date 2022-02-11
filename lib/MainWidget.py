@@ -1,19 +1,13 @@
-from cgitb import enable, text
 import sys, os, shutil, ctypes, re, csv
-from tkinter import font
-from turtle import color
 from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QInputDialog, QSplitter, QTreeView, QWidget, QPushButton, \
                             QHBoxLayout, QVBoxLayout, \
                             QFrame, QGridLayout, QLabel, QGroupBox, \
                             QLineEdit, QAbstractItemView, QMessageBox, \
-                            QProgressBar, QCheckBox, QListView, QDialog, \
-                            QTabWidget
+                            QProgressBar, QCheckBox, QListView, QDialog
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QFont, QPixmap, QImage, QDoubleValidator, QKeyEvent, \
+from PyQt5.QtGui import QFont, QPixmap, QDoubleValidator, QKeyEvent, \
                         QIntValidator, QPainter, QPen, QColor
-from matplotlib import style
-from matplotlib.pyplot import legend, title
 import pyqtgraph as pg
 
 from lib import tisgrabber as tis

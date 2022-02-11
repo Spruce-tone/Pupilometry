@@ -1,6 +1,6 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, \
-                            qApp, QDesktopWidget, QMessageBox, QWidget, QTabWidget
+                            qApp, QDesktopWidget
 from PyQt5.QtCore import pyqtSlot
 from lib.MainWidget import MainWidget
 

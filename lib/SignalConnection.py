@@ -3,8 +3,8 @@ from PyQt5.QtGui import QImage
 from lib import tisgrabber as tis
 import numpy as np
 import ctypes, time
-from lib.utils import find_circle, make_circle
-from typing import Dict, Tuple, Union
+from lib.utils import find_circle
+from typing import Tuple
 from datetime import datetime
 
 class GetCamImage(QThread):
