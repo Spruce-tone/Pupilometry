@@ -171,8 +171,10 @@ class GetCamImage(QThread):
                     self.live_signal['center'], self.live_signal['diameter'], self.live_signal['probability'], self.live_signal['dlc_output'] = self._get_circle(img) 
 
             loop_end = time.time() # imaging end time
+            self._wait_imaging(loop_start, loop_end, self.parent.frame_rate) # wait to adjust imaging speed
 
-            self.live_signal['frame_rate'] = self._mov_avg_fps(loop_start, loop_end) # get frame rate
+            wait_end = time.time() # loop end time (total duration = imaging time + waiting time)
+            self.live_signal['frame_rate'] = self._mov_avg_fps(loop_start, wait_end) # get frame rate
             self.Pixmap_display.emit(self.live_signal) # emit image signal to display
 
     def recording_mode(self):
@@ -197,7 +199,7 @@ class GetCamImage(QThread):
 
             loop_end = time.time() # imaging end time
             self._wait_imaging(loop_start, loop_end, self.parent.frame_rate) # wait to adjust imaging speed
-
+            
             wait_end = time.time() # loop end time (total duration = imaging time + waiting time)
             self.live_signal['frame_rate'] = self._mov_avg_fps(loop_start, wait_end) # get frame rate
             self.live_signal['index'] = idx
