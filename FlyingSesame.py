@@ -53,11 +53,6 @@ class pupil(QMainWindow):
         selectDeviceAction.triggered.connect(self._selectdevice)
         self.fileMenu.addAction(selectDeviceAction)
 
-        # Open deeplabcut for training
-        launchDeepLabCut = QAction('Launch', self)
-        launchDeepLabCut.triggered.connect(self._launchDeepLabcCt)
-        self.dlcMenu.addAction(launchDeepLabCut)
-
         # select models for dynamic pupil size measurments
         selectDLCModelAction = QAction('Select DeepLapCut model', self)
         selectDLCModelAction.triggered.connect(self._selectDLCModel)

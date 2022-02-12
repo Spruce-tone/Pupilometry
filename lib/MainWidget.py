@@ -17,7 +17,6 @@ from datetime import datetime
 import cv2
 from dlclive import DLCLive, Processor
 from typing import Dict, List, Union
-import deeplabcut
 from lib.utils import find_circle
 
 sys.path.append('./lib')
@@ -130,9 +129,6 @@ class MainWidget(QWidget):
             except:
                 QMessageBox.about(self, 'Failed to select DeepLabCut model', \
                             f'Please check the model path and "pose_cfg.yaml" file')
-
-    def _launch_deeplabcut(self):
-        deeplabcut.launch_dlc()
 
     def _extract_pupil_size(self):
         '''
