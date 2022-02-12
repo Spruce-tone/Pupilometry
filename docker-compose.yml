@@ -1,11 +1,11 @@
 version: "3.8"
 
 services:
-  python38:
+  python37:
     build:
         context: .
         dockerfile: Dockerfile
-    container_name: pyinstaller
+    container_name: pupilometry
     volumes:
     - ".:/data"
     ports:
