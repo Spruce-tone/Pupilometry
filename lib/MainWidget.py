@@ -1,4 +1,4 @@
-import sys, os, shutil, ctypes, re, csv
+import sys, os, shutil, ctypes, re, csv, time
 from PyQt5.QtWidgets import QFileDialog, QFileSystemModel, \
                             QInputDialog, QSplitter, QTreeView, QWidget, QPushButton, \
                             QHBoxLayout, QVBoxLayout, \
@@ -23,7 +23,13 @@ sys.path.append('./lib')
 if (sys.version_info.minor <= 7) and (sys.version_info.major==3): # add .dll search path for python 3.7 and older
     os.environ['PATH'] = os.path.abspath('./lib') + os.pathsep + os.environ['PATH']
 
-from lib.SignalConnection import GetCamImage, RefreshDevState
+from utils import CustomLogger
+
+logger = CustomLogger().info_logger
+
+
+
+from lib.SignalConnection import GetCamImage, RefreshDevState, TTLreceiver
 from lib.Automation.BDaq.InstantDiCtrl import InstantDiCtrl
 
 class MainWidget(QWidget):
@@ -38,6 +44,9 @@ class MainWidget(QWidget):
 
         # initialize dynamic plot state   
         self._init_dynamic_plot_state()
+
+        # initialize TTL triggered termination receiver
+        self._init_TTL_triggered_termination_receiver()
 
         # Define main layout
         self.main_layout = QHBoxLayout()
@@ -108,6 +117,9 @@ class MainWidget(QWidget):
     def _init_dynamic_plot_state(self):
         self.dynamic_plot = False
         self.fit_threshold = 0.9
+
+    def _init_TTL_triggered_termination_receiver(self):
+        self.TTLreceiver = TTLreceiver(self)
 
     def _dlc_model(self):
         reply = QMessageBox.question(self, 'Load DeepLabCut model', 
@@ -719,10 +731,12 @@ class MainWidget(QWidget):
     @pyqtSlot()
     def _stop_recording(self):
         self.get_img.stop()
+        self.TTLreceiver.stop()
         self.recording_type='LiveDisplay'
         self._set_enable_inputs(True)
         self._dynamicplot_set(self.dynamic_plot)
         self.video.release()
+        logger.debug(f'Recording stop')
 
     @pyqtSlot()
     def _set_recording(self):
@@ -797,7 +811,8 @@ class MainWidget(QWidget):
             # if the device receive TTL signal, start recording 
             self.recording_type = 'Triggered'
             self.get_img.set_recording_mode()
-            self.get_img.recording_termination.connect(self._stop_recording)
+            self.get_img.recording_termination.connect(self._stop_recording) # connect to recording stop signal
+            self.get_img.recording_termination_TTL.connect(self._TTL_triggered_stop_recording) # connect TTL triggered recording termination 
             self.get_img.save_img.connect(self._save_img)
             self.get_img.Pixmap_display.connect(self.display_image)
 
@@ -805,6 +820,12 @@ class MainWidget(QWidget):
             video_name = f'{self.tree_view.model.filePath(self.parent_idx)}/{self.tree_view.exp_name}.avi'
             fourcc = cv2.VideoWriter_fourcc(*'MJPG') # set codec  
             self.video = cv2.VideoWriter(video_name, fourcc, self.frame_rate, (self.img_width, self.img_height))
+
+    @pyqtSlot()
+    def _TTL_triggered_stop_recording(self):
+        self.TTLreceiver.triggered_termination.connect(self._stop_recording) # connect to stop recording
+        self.TTLreceiver.start() # receiving TTL signal
+
 
     @pyqtSlot()
     def _start_recording(self):
