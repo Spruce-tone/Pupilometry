@@ -1,4 +1,4 @@
-from PyQt5.QtCore import pyqtSignal, QThread
+from PyQt5.QtCore import pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QImage
 from lib import tisgrabber as tis
 import numpy as np
@@ -6,6 +6,10 @@ import ctypes, time
 from lib.utils import find_circle
 from typing import Tuple
 from datetime import datetime
+
+from utils import CustomLogger
+
+logger = CustomLogger().info_logger
 
 class GetCamImage(QThread):
     # signal for live imaging
@@ -15,12 +19,14 @@ class GetCamImage(QThread):
     recording_termination = pyqtSignal() # stop recording
     save_img = pyqtSignal(dict) # save image
 
+    recording_termination_TTL = pyqtSignal() # stop recording triggered by TTL
+
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
         self.camera = parent.camera
         self.ic = parent.ic
-        
+
         self.Width = ctypes.c_long()
         self.Height = ctypes.c_long()
         self.BitsPerPixel = ctypes.c_int()
@@ -172,7 +178,7 @@ class GetCamImage(QThread):
 
             loop_end = time.time() # imaging end time
             self._wait_imaging(loop_start, loop_end, self.parent.frame_rate) # wait to adjust imaging speed
-
+            
             wait_end = time.time() # loop end time (total duration = imaging time + waiting time)
             self.live_signal['frame_rate'] = self._mov_avg_fps(loop_start, wait_end) # get frame rate
             self.Pixmap_display.emit(self.live_signal) # emit image signal to display
@@ -181,7 +187,9 @@ class GetCamImage(QThread):
         if self.parent.recording_type=='Triggered':
             self._ready_trigger()
         self._ready_camera()
-              
+
+        self.recording_termination_TTL.emit() # start TTL receiver that terminate recording  
+
         for idx in range(self.parent.frames):
             loop_start = time.time() # loop starting time
             if not self.keep_recording:
@@ -209,6 +217,50 @@ class GetCamImage(QThread):
             self.save_img.emit(self.live_signal) # emit image signal to save
 
         self.recording_termination.emit()
+
+class TTLreceiver(QThread):
+    triggered_termination = pyqtSignal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+
+    def run(self):
+        '''
+        ready TTL signal for triggered recording
+        Vmin = 0V, Vmax = 5V, duration > 200 ms
+        TTL on state, data = 255
+        TTL off state, data = 254
+        '''
+        self.keep_recording = True
+        logger.debug(f'start receving TTL signal for termination')
+
+        time.sleep(5) # wait 5s during start TTL keeps high (5V) state
+
+        self.outlier_check = np.array([0]*100) # to prevent outlier TTL signal, moving average filter
+
+        while self.keep_recording:
+            # receive TTL signal
+            # default data value = [254] when trigger receiving device is connected to the TTL source using BNC cable
+            _, data = self.parent.trig.readAny(self.parent.startPort, self.parent.portCount)
+            
+            self.outlier_check[:-1] = self.outlier_check[1:]
+            self.outlier_check[-1] = data[0]-254
+            
+            # when the device receive TTL signal, the data value becaomes [255]  
+            if data==[255] and (self.outlier_check.sum() >= 25):
+                logger.debug(f'TTL received')
+                self.triggered_termination.emit()
+                self.keep_recording = False
+                logger.debug(f'signal emit and stop the receiving')
+
+    def pause(self):
+        self.running = False
+
+    def stop(self):
+        self.running = False
+        self.quit()
+        self.wait(10000)
 
 class RefreshDevState(QThread):
     refresh_dev_state = pyqtSignal(bool)

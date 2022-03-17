@@ -1,15 +1,20 @@
-*.ipynb
-.vscode
-adventech
+# filename extension
+*.tif
 *.yaml
 *.dll
 *.xml
+*.avi
+*.ipynb
+*.log
+
+# directoried
+pupil movie
+test
+adventech
 IC-Imaging-Control
 env
 __pycache__
 build
 dist
-*.tif
-*.avi
-pupil movie
-test
+logs
+.vscode
