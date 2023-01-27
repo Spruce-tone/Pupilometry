@@ -1,0 +1,15 @@
+cff-version: 1.0.0
+authors:
+- family-names: "Jo"
+  given-names: "Yongjae"
+  orcid: "https://orcid.org/0000-0001-6585-0012"
+title: "Pupilometry, FlyingSesame"
+version: 1.0.0
+date-released: 2023-01-27
+url: "https://github.com/Spruce-tone/pupil"
+preferred-citation:
+  type: software
+  authors:
+  - family-names: "Jo"
+    given-names: "Yongjae"
+  orcid: "https://orcid.org/0000-0001-6585-0012"
