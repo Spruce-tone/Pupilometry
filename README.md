@@ -2,7 +2,9 @@
 
 # Pupilometry
 [![DOI](https://zenodo.org/badge/439247676.svg)](https://zenodo.org/badge/latestdoi/439247676)  
-It is commonly hard to take image using CMOS (or CCD) sensor during taking MRI (magnetic resonance imaging) signal due to the magnetic compatibility or electromagnetic interference. For that, we bought commercialized MR compatible camera and have developed this software to control the devices conveniently. 
+It is commonly hard to take image using CMOS (or CCD) sensor during taking MRI (magnetic resonance imaging) signal due to the magnetic compatibility or electromagnetic interference. For that, we bought commercialized MR compatible camera and have developed this software to control the devices conveniently. This tool implement the keypoint detection model to automatically measure the pupil size in real time. If you want to detect keypoint from another type object, refer this [site][DLC] and train for your data  
+
+[DLC]: https://github.com/DeepLabCut/DeepLabCut
 
 # Requirements
 Copy below files from [here](https://github.com/TheImagingSource/IC-Imaging-Control-Samples/tree/master/Python/tisgrabber/samples) and paste to `lib` directory  
