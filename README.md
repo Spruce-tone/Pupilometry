@@ -34,6 +34,9 @@ python FlyingSesame.py
 ```
 ![캡처](/movie/sample_movie.gif)
 
+# Mascot
+![Sesame](/movie/mascot sesame.jpg)
+
 # Reference
 [1] https://github.com/TheImagingSource/IC-Imaging-Control-Samples
 [2] https://github.com/DeepLabCut/DeepLabCut
