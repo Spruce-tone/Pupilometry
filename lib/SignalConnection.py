@@ -204,7 +204,6 @@ class GetCamImage(QThread):
                     # get center and diameter of pupil
                     self.live_signal['center'], self.live_signal['diameter'], _, self.live_signal['dlc_output'] = self._get_circle(img) 
 
-
             loop_end = time.time() # imaging end time
             self._wait_imaging(loop_start, loop_end, self.parent.frame_rate) # wait to adjust imaging speed
             
