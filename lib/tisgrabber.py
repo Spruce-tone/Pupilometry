@@ -113,6 +113,10 @@ def declareFunctions(ic):
     ic.ENUMCODECCB = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_char_p, ctypes.py_object)
     ic.IC_enumCodecs.argtypes = (ic.ENUMCODECCB, ctypes.py_object)
 
+    ic.IC_SetPropertyValue.argtypes = (ctypes.POINTER(HGRABBER),
+                            ctypes.c_char_p,
+                            ctypes.c_char_p,
+                            ctypes.c_int)
 
 def T(instr):
     ''' Helper function

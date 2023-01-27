@@ -235,7 +235,7 @@ class TTLreceiver(QThread):
         self.keep_recording = True
         logger.debug(f'start receving TTL signal for termination')
 
-        time.sleep(5) # wait 5s during start TTL keeps high (5V) state
+        time.sleep(5) # wait 5s during TTL keeps high (5V) state
 
         self.outlier_check = np.array([0]*100) # to prevent outlier TTL signal, moving average filter
 
