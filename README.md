@@ -1,4 +1,7 @@
+
+
 # Pupilometry
+[![DOI](https://zenodo.org/badge/439247676.svg)](https://zenodo.org/badge/latestdoi/439247676)  
 It is commonly hard to take image using CMOS (or CCD) sensor during taking MRI (magnetic resonance imaging) signal due to the magnetic compatibility or electromagnetic interference. For that, we bought commercialized MR compatible camera and have developed this software to control the devices conveniently. 
 
 # Requirements
