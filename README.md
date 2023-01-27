@@ -36,3 +36,4 @@ python FlyingSesame.py
 
 # Reference
 [1] https://github.com/TheImagingSource/IC-Imaging-Control-Samples
+[2] https://github.com/DeepLabCut/DeepLabCut
