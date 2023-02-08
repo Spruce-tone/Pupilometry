@@ -40,5 +40,5 @@ python FlyingSesame.py
 ![Sesame](/movie/mascot_sesame.jpg)
 
 # Reference
-[1] https://github.com/TheImagingSource/IC-Imaging-Control-Samples
+[1] https://github.com/TheImagingSource/IC-Imaging-Control-Samples  
 [2] https://github.com/DeepLabCut/DeepLabCut
